@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=1280">
+    <title>F1 Racing Championship</title>
+    <link rel="stylesheet" href="css/style.css">
+    <style>
+        @font-face {
+            font-family: 'Formula1';
+            src: local('Arial Black'), local('Impact');
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+<!-- GAME CANVAS -->
+<canvas id="gameCanvas"></canvas>
+<canvas id="hud" width="1280" height="720" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;display:none;"></canvas>
+
+<!-- MENU OVERLAY -->
+<div id="menu"></div>
+
+<!-- SCRIPTS: load order matters -->
+<script src="js/config.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/tracks/monaco.js"></script>
+<script src="js/tracks/spa.js"></script>
+<script src="js/tracks/silverstone.js"></script>
+<script src="js/tracks/monza.js"></script>
+<script src="js/tracks/suzuka.js"></script>
+<script src="js/car.js"></script>
+<script src="js/physics.js"></script>
+<script src="js/track.js"></script>
+<script src="js/renderer.js"></script>
+<script src="js/particles.js"></script>
+<script src="js/weather.js"></script>
+<script src="js/ai.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/hud.js"></script>
+<script src="js/multiplayer.js"></script>
+<script src="js/game.js"></script>
+<script src="js/menu.js"></script>
+<script>
+    // Boot
+    const game = new Game();
+    const gameMenu = new Menu(game);
+
+    // Handle canvas resize to fit window
+    function resizeCanvas() {
+        const canvas = document.getElementById('gameCanvas');
+        const hudCanvas = document.getElementById('hud');
+        const scaleX = window.innerWidth / 1280;
+        const scaleY = window.innerHeight / 720;
+        const scale = Math.min(scaleX, scaleY);
+        const w = Math.round(1280 * scale);
+        const h = Math.round(720 * scale);
+        canvas.style.width = w + 'px';
+        canvas.style.height = h + 'px';
+        hudCanvas.style.width = w + 'px';
+        hudCanvas.style.height = h + 'px';
+    }
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+</script>
+</body>
+</html>

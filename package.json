@@ -1,0 +1,13 @@
+{
+  "name": "f1-racing-game",
+  "version": "1.0.0",
+  "description": "Realistic F1 browser racing game with multiplayer",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  }
+}
