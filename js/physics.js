@@ -27,6 +27,7 @@ class Physics {
         const speed = Math.sqrt(car.vx * car.vx + car.vy * car.vy);
 
         // --- GEAR LOGIC ---
+        if (car.gearShiftTimer > 0) car.gearShiftTimer -= dt;
         this._updateGear(car, vx_local);
 
         // --- ENGINE FORCE ---

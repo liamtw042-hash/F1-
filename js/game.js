@@ -242,7 +242,7 @@ class Game {
 
         // Audio for player car
         if (this.playerCars[0]) {
-            this.audio.updateEngine(this.playerCars[0]);
+            this.audio.update(this.playerCars[0], dt);
         }
 
         // Send multiplayer state
@@ -265,16 +265,14 @@ class Game {
                 const inputs = this._getPlayerInputs(car.playerIndex);
                 car.throttle = inputs.accelerate;
                 car.brakeInput = inputs.brake;
+                car._aiInputs = inputs; // Store for rendering (steer angle)
                 this.physics.update(car, inputs, this.track, dt);
-            }
-            if (!car.isPlayer && !car.pitStopActive) {
-                // AI uses stored inputs from ai.js update
             }
         }
     }
 
     _getPlayerInputs(playerIndex) {
-        const ctrl = playerIndex === 0 ? CONFIG.CONTROLS.P1 : CONFIG.CONTROLS.P2;
+        const ctrl = playerIndex === 0 ? CONTROLS.P1 : CONTROLS.P2;
         return {
             accelerate: this.keys[ctrl.accelerate] ? 1 : 0,
             brake: this.keys[ctrl.brake] ? 1 : 0,
@@ -289,8 +287,11 @@ class Game {
         for (const car of this.cars) {
             if (car.finished || car.retired) continue;
 
-            car.lapTime += dt;
-            car.totalRaceTime += dt;
+            // Lap time is computed from raceTime - lapStartTime in car
+            if (car.hasStarted) {
+                car.lapTime = this.raceTime - car.lapStartTime;
+            }
+            car.totalRaceTime = this.raceTime;
 
             // Update weather on car
             car.weather = this.weather.currentWeather;
@@ -303,10 +304,9 @@ class Game {
                 const ctrl = car.playerIndex === 0 ? CONFIG.CONTROLS.P1 : CONFIG.CONTROLS.P2;
                 if (this._keyJustPressed(ctrl.pit)) car.requestPitStop();
             }
-            if (car.pitRequested && car.inPitLane) {
+            if (car.pitRequested && car.inPitLane && !car.pitStopActive) {
                 car.startPitStop(car.pendingCompound || car.tireCompound);
                 if (car.isPlayer) {
-                    this.audio.playPitStop();
                     this.hud.addMessage('PIT STOP - Changing tires...', '#ffaa00', 3);
                 }
             }

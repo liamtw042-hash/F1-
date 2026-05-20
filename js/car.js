@@ -160,11 +160,18 @@ class Car {
         this.bestSectorTimes = [Infinity, Infinity, Infinity];
         this.pitStops = 0;
         this.pitRequested = false;
+        this.pitStopActive = false;
+        this.pitStopTimer = 0;
+        this.inPitLane = false;
         this.finished = false;
         this.retired = false;
         this.ersEnergy = CONFIG.ERS_MAX_ENERGY * 0.5;
         this.lapStartTime = 0;
         this.hasStarted = false;
+        this.currentWaypoint = 0;
+        this.lapProgress = 0;
+        this.trackProgress = 0;
+        this._aiInputs = null;
     }
 
     completeLap(raceTime) {
