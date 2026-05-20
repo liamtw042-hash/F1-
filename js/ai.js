@@ -43,9 +43,6 @@ class AIDriver {
 
     update(allCars, dt, raceTime) {
         if (this.car.finished || this.car.retired || this.car.pitStopActive) {
-            if (this.car.pitStopActive) {
-                this.car.updatePitStop(dt);
-            }
             return;
         }
 

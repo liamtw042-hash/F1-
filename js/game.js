@@ -41,6 +41,15 @@ class Game {
             standings: []
         };
 
+        // Track registry — const declarations are NOT window properties, so use explicit map
+        this.tracks = {
+            monaco:      MonacoTrack,
+            spa:         SpaTrack,
+            silverstone: SilverstoneTrack,
+            monza:       MonzaTrack,
+            suzuka:      SuzukaTrack
+        };
+
         this._setupInput();
         this._setupMultiplayer();
         requestAnimationFrame((t) => this._loop(t));
@@ -76,7 +85,7 @@ class Game {
         playerCount = playerCount || 1;
 
         // Load track
-        const trackData = window[`${trackKey.charAt(0).toUpperCase() + trackKey.slice(1)}Track`];
+        const trackData = this.tracks[trackKey];
         if (!trackData) { console.error('Track not found:', trackKey); return; }
         this.track = new Track(trackData);
         this.totalLaps = totalLaps;
@@ -301,7 +310,7 @@ class Game {
 
             // Pit stop trigger
             if (car.isPlayer) {
-                const ctrl = car.playerIndex === 0 ? CONFIG.CONTROLS.P1 : CONFIG.CONTROLS.P2;
+                const ctrl = car.playerIndex === 0 ? CONTROLS.P1 : CONTROLS.P2;
                 if (this._keyJustPressed(ctrl.pit)) car.requestPitStop();
             }
             if (car.pitRequested && car.inPitLane && !car.pitStopActive) {
@@ -410,22 +419,7 @@ class Game {
         if (this._keyJustPressed('Escape')) {
             this.state = 'RACING';
         }
-        // Draw pause overlay
-        const ctx = this.renderer.ctx;
-        this.renderer.clear();
-        this.renderer.drawBackground(this.track);
-        this.renderer.drawTrack(this.track, this.weather);
-        for (const car of this.cars) this.renderer.drawCar(car);
-        ctx.fillStyle = 'rgba(0,0,0,0.6)';
-        ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
-        ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 48px Formula1, monospace';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('PAUSED', CONFIG.CANVAS_WIDTH / 2, CONFIG.CANVAS_HEIGHT / 2 - 20);
-        ctx.font = '20px Formula1, monospace';
-        ctx.fillStyle = '#aaaaaa';
-        ctx.fillText('Press ESC to resume', CONFIG.CANVAS_WIDTH / 2, CONFIG.CANVAS_HEIGHT / 2 + 30);
+        // Rendering is handled by _render, which checks state === 'PAUSED'
     }
 
     _updateRaceOver(dt) {
@@ -522,6 +516,21 @@ class Game {
             raceTime: this.raceTime,
             totalLaps: this.totalLaps
         });
+
+        // Pause overlay (drawn last so it sits on top of everything)
+        if (this.state === 'PAUSED') {
+            const ctx = this.renderer.ctx;
+            ctx.fillStyle = 'rgba(0,0,0,0.65)';
+            ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 52px Arial Black, monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('PAUSED', CONFIG.CANVAS_WIDTH / 2, CONFIG.CANVAS_HEIGHT / 2 - 24);
+            ctx.font = '22px Arial, monospace';
+            ctx.fillStyle = '#aaaaaa';
+            ctx.fillText('Press ESC to resume', CONFIG.CANVAS_WIDTH / 2, CONFIG.CANVAS_HEIGHT / 2 + 30);
+        }
 
         // Multiplayer latency
         if (this.multiplayer.isConnected()) {

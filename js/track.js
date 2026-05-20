@@ -14,6 +14,9 @@ class Track {
         this.cumulativeDistances = this._calculateCumulativeDistances();
         this.totalLength = this.cumulativeDistances[this.cumulativeDistances.length - 1];
 
+        // Normals must be computed BEFORE racing line (racing line reads them)
+        this.normals = this._computeNormals();
+
         // Generate racing line (slightly inside the track)
         this.racingLine = this._generateRacingLine();
 
@@ -29,9 +32,6 @@ class Track {
             x: (this.bounds.minX + this.bounds.maxX) / 2,
             y: (this.bounds.minY + this.bounds.maxY) / 2
         };
-
-        // Pre-compute normals for each path point
-        this.normals = this._computeNormals();
     }
 
     _calculateCumulativeDistances() {
