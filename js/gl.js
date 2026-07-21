@@ -522,19 +522,17 @@ function buildWorld(cir, def, H, rng) {
         m.quadT([s.x + nx + fx, h + 7.0, s.y + nz + fz], [s.x - nx + fx, h + 7.0, s.y - nz + fz],
                 [s.x - nx + fx, h + 5.6, s.y - nz + fz], [s.x + nx + fx, h + 5.6, s.y + nz + fz], WHITE, T.BANNER);
         m.box(s.x, h + 7.2, s.y, 1.4, 0.4, hw * 2 + 4, PAL.gantry, -yaw);
-        for (let li = 0; li < 5; li++) {
-            const lat = (li - 2) * 2.2;
-            m.box(s.x + s.nx * lat, h + 5.1, s.y + s.ny * lat, 0.8, 0.8, 0.8, [0.25, 0.03, 0.03], -yaw);
-        }
+        // light housings only — the lamps themselves are drawn live by GLView
+        m.box(s.x, h + 5.1, s.y, 1.0, 1.0, hw * 2 - 2, [0.12, 0.12, 0.14], -yaw);
     }
 
-    // --- clouds: big puffy stacks ---
-    for (let i = 0; i < 7; i++) {
+    // --- clouds: few, huge, very high — distant cumulus, not floating debris ---
+    for (let i = 0; i < 4; i++) {
         const x = gx0 + rng() * gw, z = gz0 + rng() * gh;
-        const y = 150 + rng() * 70, sc = 34 + rng() * 30;
-        m.box(x, y, z, sc, sc * 0.30, sc * 0.62, [0.99, 0.99, 1.0], rng() * 3);
-        m.box(x + sc * 0.32, y + sc * 0.16, z + sc * 0.15, sc * 0.62, sc * 0.30, sc * 0.45, [0.97, 0.98, 1.0], rng() * 3);
-        m.box(x - sc * 0.3, y + sc * 0.10, z - sc * 0.12, sc * 0.5, sc * 0.24, sc * 0.4, [0.95, 0.97, 1.0], rng() * 3);
+        const y = 280 + rng() * 90, sc = 70 + rng() * 60;
+        m.box(x, y, z, sc, sc * 0.22, sc * 0.60, [0.99, 0.99, 1.0], rng() * 3);
+        m.box(x + sc * 0.30, y + sc * 0.12, z + sc * 0.14, sc * 0.6, sc * 0.22, sc * 0.42, [0.97, 0.98, 1.0], rng() * 3);
+        m.box(x - sc * 0.28, y + sc * 0.08, z - sc * 0.10, sc * 0.5, sc * 0.18, sc * 0.38, [0.95, 0.97, 1.0], rng() * 3);
     }
 
     // --- horizon: base disc + mountain ring ---

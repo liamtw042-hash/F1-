@@ -26,9 +26,16 @@ with saved standings.
   trackside marker posts, trees, grandstands, clouds and distance fog
 - **Sense of speed**: FOV that stretches as you accelerate, camera shake,
   speed-line streaks, 13m road stripes flickering past
-- **Real racing systems** — DRS (green zones, within 1.4s of the car ahead),
-  **slipstream tow** (tuck in behind a car for less drag — watch for ⚡ TOW),
-  ERS boost, tyre wear + temperature across 5 compounds, fuel burn, pit stops
+- **Real racing systems** — DRS (green edge-lined zones, within 1.4s of the car
+  ahead), **slipstream tow** (⚡ TOW), ERS boost, tyre wear + temperature across
+  5 compounds, fuel burn, pit stops
+- **Contact with consequences** — dive into someone and YOU usually come off
+  worse: a head-on punt destabilises you and can break your front wing (pit to
+  repair) — but a clean hit on their rear quarter sends THEM loose instead
+- **Race craft tools** — live delta to your best lap, sector pips, race
+  engineer radio (tyre calls, defend warnings, final-lap push), per-track
+  records saved on your machine, R to instantly restart from pause
+- **Drive with WASD or arrow keys** — both work at once in single player
 - **5 circuits** at real lap lengths: Monaco, Spa, Silverstone, Monza, Suzuka
 - **19 AI drivers** with real names who overtake, defend, and pit for the
   right tyres when the rain comes

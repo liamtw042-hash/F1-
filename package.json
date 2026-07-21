@@ -1,8 +1,8 @@
 {
   "name": "crazy-grand-prix",
-  "version": "3.0.0",
-  "description": "Crazy Grand Prix — low-poly 3D F1 racing in the browser with serverless online multiplayer",
+  "version": "4.0.0",
+  "description": "Crazy Grand Prix \u2014 low-poly 3D F1 racing in the browser with serverless online multiplayer",
   "scripts": {
-    "test": "node test/sim.js && node test/gl-geom.js && node test/net.js && node test/render3d.js"
+    "test": "node test/sim.js && node test/gl-geom.js && node test/net.js && node test/contact.js && node test/render3d.js"
   }
 }

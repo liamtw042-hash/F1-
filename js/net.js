@@ -197,6 +197,7 @@ function smoothRemoteCar(car, cir, dt) {
     while (dh < -Math.PI) dh += 2 * Math.PI;
     car.heading += dh * k;
     car.v = n.v;
+    car.wheelAng = ((car.wheelAng || 0) + (n.v / 0.34) * dt) % (Math.PI * 2);
     // keep arc/cumDist tracking so DRS, gaps and minimap stay correct
     const idx = cir.nearest(car.x, car.y, car.idx);
     const sp = cir.at(idx);

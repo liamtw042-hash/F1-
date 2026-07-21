@@ -8,7 +8,7 @@
 
 /* ============================== CONFIG ============================== */
 const CFG = {
-    VERSION: '3.3',
+    VERSION: '4.0',
     DT: 1 / 60,
     VMAX: 103,              // m/s hard cap (~371 km/h)
     MASS: 798,              // kg without fuel
@@ -519,7 +519,7 @@ class AIBrain {
             const wrongTyre = (env.wetness > 0.55 && c.compound !== 'WET') ||
                               (env.wetness > 0.22 && env.wetness <= 0.55 && c.compound !== 'INTER' && c.compound !== 'WET') ||
                               (env.wetness < 0.12 && (c.compound === 'WET' || c.compound === 'INTER'));
-            if (c.wear > 0.72 || wrongTyre) c.pitRequest = true;
+            if (c.wear > 0.72 || wrongTyre || c.wingDmg) c.pitRequest = true;
         }
 
         return { throttle, brake, steer, drs, ers };
