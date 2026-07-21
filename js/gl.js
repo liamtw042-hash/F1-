@@ -857,6 +857,22 @@ class GLView {
 
     hAt(i) { const N = this.cir.N; return this.H[((i % N) + N) % N]; }
 
+    // interpolated ground height at a world point — project onto the nearest
+    // centreline segment and lerp between sample heights (no flat-step popping)
+    groundAt(x, z, idx) {
+        let best = this.hAt(idx), bd = Infinity;
+        for (const j of [idx - 1, idx]) {
+            const a = this.cir.at(j), b = this.cir.at(j + 1);
+            const abx = b.x - a.x, abz = b.y - a.y;
+            const len2 = abx * abx + abz * abz || 1;
+            const t = Math.max(0, Math.min(1, ((x - a.x) * abx + (z - a.y) * abz) / len2));
+            const px = a.x + abx * t, pz = a.y + abz * t;
+            const d = (x - px) * (x - px) + (z - pz) * (z - pz);
+            if (d < bd) { bd = d; best = this.hAt(j) + (this.hAt(j + 1) - this.hAt(j)) * t; }
+        }
+        return best;
+    }
+
     _bind(buf) {
         const gl = this.gl, L = this.loc;
         gl.bindBuffer(gl.ARRAY_BUFFER, buf.pos);
@@ -894,7 +910,7 @@ class GLView {
         gl.disable(gl.BLEND);
 
         // camera
-        const h = this.hAt(car.idx);
+        const h = this.groundAt(car.x, car.y, car.idx);
         const cosH = Math.cos(car.heading), sinH = Math.sin(car.heading);
         let ex, ey, ez, tx, ty, tz;
         if (mode === 'cockpit') {
@@ -922,6 +938,12 @@ class GLView {
         cam.tgt[0] += (tx - cam.tgt[0]) * Math.min(1, k * 1.6);
         cam.tgt[1] += (ty - cam.tgt[1]) * Math.min(1, k * 1.6);
         cam.tgt[2] += (tz - cam.tgt[2]) * Math.min(1, k * 1.6);
+        // never let the camera drop below the terrain it's flying over (hills)
+        if (mode !== 'cockpit') {
+            const gi = this.cir.nearest(cam.pos[0], cam.pos[2], car.idx);
+            const gc = this.groundAt(cam.pos[0], cam.pos[2], gi);
+            if (cam.pos[1] < gc + 0.8) cam.pos[1] = gc + 0.8;
+        }
 
         // speed-FOV — the biggest "we're flying" lever, plus extra kick on ERS
         const boost = car.ersDeploying ? 6 : 0;
@@ -968,7 +990,7 @@ class GLView {
 
         // cars: body with specular paint + four spinning wheels
         const carPose = c => {
-            const ch2 = this.hAt(c.idx);
+            const ch2 = this.groundAt(c.x, c.y, c.idx);
             const slope = (this.hAt(c.idx + 2) - this.hAt(c.idx - 2)) / (4 * this.cir.ds);
             return { mdl: M4.trs(c.x, ch2 + 0.05, c.y, -c.heading, Math.atan(slope) * 0.8), h: ch2 };
         };

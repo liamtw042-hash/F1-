@@ -8,7 +8,7 @@
 
 /* ============================== CONFIG ============================== */
 const CFG = {
-    VERSION: '4.0',
+    VERSION: '4.1',
     DT: 1 / 60,
     VMAX: 103,              // m/s hard cap (~371 km/h)
     MASS: 798,              // kg without fuel
@@ -259,7 +259,7 @@ function createCar(o) {
         slide: false, offTrack: false, onKerb: false, gearFlash: 0,
         stuckT: 0, resetFlash: 0, gripRatio: 1, ghostT: 0, contact: 0,
         isRemote: false, netPid: -1, _net: null, slip: 0,
-        wheelAng: 0, slideT: 0, colCd: 0, wingDmg: false, gapBehindSec: 99,
+        wheelAng: 0, slideT: 0, colCd: 0, wallCd: 0, wingDmg: false, gapBehindSec: 99,
         _curLap: null, _bestLap: null, deltaBest: null,
 
         pitRequest: false, pitStopActive: false, pitTimer: 0, pitCount: 0, pendingCompound: null,
@@ -421,12 +421,41 @@ function moveCar(car, cir, dt) {
     const idx = cir.nearest(car.x, car.y, car.idx);
     const sp = cir.at(idx);
     car.lat = (car.x - sp.x) * sp.nx + (car.y - sp.y) * sp.ny;
-    const newArc = idx * cir.ds;
+
+    // --- solid barrier: cars cannot pass through the trackside wall ---
+    // the visual armco sits at s.w/2 + 6.6; stop the car body just inside it
+    const wallLim = sp.w / 2 + 5.6;
+    if (Math.abs(car.lat) > wallLim && !(car.ghostT > 0)) {
+        const side = car.lat >= 0 ? 1 : -1;
+        // push the car back to the wall line
+        const overrun = Math.abs(car.lat) - wallLim;
+        car.x -= side * sp.nx * overrun;
+        car.y -= side * sp.ny * overrun;
+        car.lat = side * wallLim;
+        // scrub the speed component driving into the wall, keep what's parallel
+        const intoWall = (Math.cos(car.heading) * sp.nx + Math.sin(car.heading) * sp.ny) * side;
+        if (intoWall > 0) {
+            car.v *= Math.max(0.35, 1 - intoWall * 0.7);
+            // steer the nose back along the barrier so you scrape, not stick
+            car.heading -= side * intoWall * 0.06;
+            car.slideT = Math.max(car.slideT, 0.25);
+            if (car.wallCd === undefined || car.wallCd <= 0) {
+                car.wallCd = 0.4;
+                if (car.isPlayer) car._wallHit = true;   // consumed by session for sfx
+            }
+        }
+    }
+    if (car.wallCd > 0) car.wallCd -= dt;
+
+    const idx2 = cir.nearest(car.x, car.y, car.idx);
+    const sp2 = cir.at(idx2);
+    car.lat = (car.x - sp2.x) * sp2.nx + (car.y - sp2.y) * sp2.ny;
+    const newArc = idx2 * cir.ds;
     if (car.idx >= 0) {
         const d = U.wrapDelta(newArc - car.arc, cir.length);
         if (Math.abs(d) < 60) car.cumDist += d;
     }
-    car.idx = idx; car.arc = newArc;
+    car.idx = idx2; car.arc = newArc;
 }
 
 /* ============================== AI ============================== */
@@ -772,6 +801,7 @@ class RaceSession {
                 c._curLap = null;
             }
             if (c.justReset && c.isPlayer) this.msg('CAR RESET TO TRACK', '#ffaa00');
+            if (c._wallHit) { c._wallHit = false; this.events.push({ snd: 'thud' }); }
 
             // Pit entry
             if (c.pitRequest && !c.pitStopActive && !c.finished) {
@@ -2744,14 +2774,8 @@ class Game {
                 }
             }
 
-            // position change popups for local players
+            // podium confetti (position-change popups intentionally removed)
             for (const p of s.cars.filter(c => c.isPlayer)) {
-                const prev = this._lastPos[p.playerIndex];
-                if (s.state === 'racing' && prev && prev !== p.pos && s.raceTime > 5) {
-                    if (p.pos < prev) this.hud.addMessage(`P${p.pos}  ▲ OVERTAKE!`, '#00ff88');
-                    else this.hud.addMessage(`P${p.pos}  ▼`, '#ff8866');
-                }
-                this._lastPos[p.playerIndex] = p.pos;
                 if (p.finished && p.pos <= 3 && !this._confettiFired) {
                     this._confettiFired = true;
                     this.hud.startConfetti();
