@@ -8,6 +8,7 @@
 
 /* ============================== CONFIG ============================== */
 const CFG = {
+    VERSION: '3.1',
     DT: 1 / 60,
     VMAX: 103,              // m/s hard cap (~371 km/h)
     MASS: 798,              // kg without fuel
@@ -1127,63 +1128,61 @@ class Renderer3D {
     }
 
     drawCockpit(ctx, W, H, car, timeS) {
-        // mirrors
+        // mirrors — small, tucked to the sides
         const mirror = (mx) => {
-            ctx.fillStyle = 'rgba(12,14,17,0.95)';
-            ctx.beginPath(); ctx.roundRect(mx - W * 0.045, H * 0.145, W * 0.09, H * 0.052, 6); ctx.fill();
-            ctx.fillStyle = '#5a6570';
-            ctx.fillRect(mx - W * 0.038, H * 0.153, W * 0.076, H * 0.036);
-            ctx.fillStyle = '#39424b';
-            ctx.fillRect(mx - W * 0.038, H * 0.153, W * 0.076, H * 0.014);
+            ctx.fillStyle = 'rgba(12,14,17,0.9)';
+            ctx.beginPath(); ctx.roundRect(mx - W * 0.032, H * 0.10, W * 0.064, H * 0.038, 5); ctx.fill();
+            ctx.fillStyle = '#57616c';
+            ctx.fillRect(mx - W * 0.027, H * 0.106, W * 0.054, H * 0.026);
         };
-        mirror(W * 0.155); mirror(W * 0.845);
+        mirror(W * 0.10); mirror(W * 0.90);
 
-        // halo — center pillar + hoop
-        ctx.strokeStyle = 'rgba(14,16,19,0.94)';
-        ctx.lineWidth = H * 0.052;
+        // halo — slim hoop hugging the top edge + slender pillar
+        ctx.strokeStyle = 'rgba(14,16,19,0.88)';
+        ctx.lineWidth = H * 0.026;
         ctx.beginPath();
-        ctx.ellipse(W / 2, H * 0.115, W * 0.43, H * 0.185, 0, 0.28, Math.PI - 0.28);
+        ctx.ellipse(W / 2, H * 0.015, W * 0.46, H * 0.115, 0, 0.32, Math.PI - 0.32);
         ctx.stroke();
-        ctx.fillStyle = 'rgba(14,16,19,0.94)';
+        ctx.fillStyle = 'rgba(14,16,19,0.88)';
         ctx.beginPath();
-        ctx.moveTo(W / 2 - W * 0.012, H * 0.02);
-        ctx.lineTo(W / 2 + W * 0.012, H * 0.02);
-        ctx.lineTo(W / 2 + W * 0.020, H * 0.30);
-        ctx.lineTo(W / 2 - W * 0.020, H * 0.30);
+        ctx.moveTo(W / 2 - W * 0.007, 0);
+        ctx.lineTo(W / 2 + W * 0.007, 0);
+        ctx.lineTo(W / 2 + W * 0.011, H * 0.155);
+        ctx.lineTo(W / 2 - W * 0.011, H * 0.155);
         ctx.closePath(); ctx.fill();
 
-        // front tyres (blurred by speed)
+        // front tyres — mostly below the frame, just a hint of rubber
         const spin = (timeS * car.v * 2) % 1;
         const tyre = (tx, dir) => {
             ctx.save();
-            ctx.translate(tx, H * 0.93);
-            ctx.rotate(dir * 0.10 + car.steerS * 0.06 * dir);
+            ctx.translate(tx, H * 1.02);
+            ctx.rotate(dir * 0.09 + car.steerS * 0.06 * dir);
             ctx.fillStyle = '#0b0b0d';
-            ctx.beginPath(); ctx.roundRect(-W * 0.075, -H * 0.16, W * 0.15, H * 0.34, 18); ctx.fill();
+            ctx.beginPath(); ctx.roundRect(-W * 0.062, -H * 0.14, W * 0.124, H * 0.26, 16); ctx.fill();
             ctx.strokeStyle = `rgba(70,70,76,${car.v > 3 ? 0.25 : 0.8})`;
             ctx.lineWidth = 3;
             for (let i = 0; i < 3; i++) {
-                const yy = -H * 0.14 + ((spin + i / 3) % 1) * H * 0.3;
-                ctx.beginPath(); ctx.moveTo(-W * 0.07, yy); ctx.lineTo(W * 0.07, yy); ctx.stroke();
+                const yy = -H * 0.12 + ((spin + i / 3) % 1) * H * 0.22;
+                ctx.beginPath(); ctx.moveTo(-W * 0.055, yy); ctx.lineTo(W * 0.055, yy); ctx.stroke();
             }
             ctx.restore();
         };
-        tyre(W * 0.09, -1); tyre(W * 0.91, 1);
+        tyre(W * 0.075, -1); tyre(W * 0.925, 1);
 
-        // nose cone
+        // nose cone — slimmer wedge
         ctx.fillStyle = car.c1;
         ctx.beginPath();
-        ctx.moveTo(W * 0.335, H);
-        ctx.lineTo(W * 0.665, H);
-        ctx.lineTo(W * 0.560, H * 0.735);
-        ctx.lineTo(W * 0.440, H * 0.735);
+        ctx.moveTo(W * 0.375, H);
+        ctx.lineTo(W * 0.625, H);
+        ctx.lineTo(W * 0.545, H * 0.80);
+        ctx.lineTo(W * 0.455, H * 0.80);
         ctx.closePath(); ctx.fill();
-        ctx.fillStyle = 'rgba(0,0,0,0.28)';
+        ctx.fillStyle = 'rgba(0,0,0,0.25)';
         ctx.beginPath();
-        ctx.moveTo(W * 0.335, H); ctx.lineTo(W * 0.40, H); ctx.lineTo(W * 0.468, H * 0.735); ctx.lineTo(W * 0.44, H * 0.735);
+        ctx.moveTo(W * 0.375, H); ctx.lineTo(W * 0.425, H); ctx.lineTo(W * 0.472, H * 0.80); ctx.lineTo(W * 0.455, H * 0.80);
         ctx.closePath(); ctx.fill();
         ctx.fillStyle = car.c2;
-        ctx.fillRect(W * 0.44, H * 0.735, W * 0.12, H * 0.018);
+        ctx.fillRect(W * 0.455, H * 0.80, W * 0.09, H * 0.014);
 
         // steering wheel
         ctx.save();
@@ -1574,6 +1573,9 @@ class HUD {
         ctx.fillText(p.pos > 1 ? `LEADER +${gap.toFixed(1)}s` : 'LEADER', this.W - 12, 15);
         ctx.fillStyle = '#889';
         ctx.fillText(session.fastestLap.time < Infinity ? `FL ${session.fastestLap.name} ${U.fmtTime(session.fastestLap.time)}` : '', this.W - 12, 33);
+        ctx.fillStyle = '#445';
+        ctx.font = '9px Consolas, monospace';
+        ctx.fillText('v' + CFG.VERSION, this.W - 4, this.H - 6);
     }
 
     speedo(p) {
@@ -2258,7 +2260,7 @@ class Menu {
         this.el.innerHTML = `
         <div class="menu-logo">
             <div class="logo-f1" style="font-size:72px">CRAZY</div>
-            <div class="logo-sub">GRAND PRIX</div>
+            <div class="logo-sub">GRAND PRIX &nbsp;·&nbsp; v${CFG.VERSION}</div>
         </div>
         <div class="menu-buttons">
             <button class="btn btn-primary" data-act="quick">QUICK RACE</button>

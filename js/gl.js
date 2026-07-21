@@ -182,6 +182,26 @@ function buildWorld(cir, def, H, rng) {
         }
     }
 
+    // --- mow stripes + perimeter walls: ground-level detail that sells speed ---
+    for (let i = 0; i < N; i++) {
+        const s = cir.at(i), hw = s.w / 2;
+        const shade = (i >> 3) % 2 === 0 ? 1.0 : 0.86;
+        const g1 = [PAL.grassA[0] * shade, PAL.grassA[1] * shade, PAL.grassA[2] * shade];
+        const g2 = [PAL.grassB[0] * shade, PAL.grassB[1] * shade, PAL.grassB[2] * shade];
+        // two mown bands each side between track edge and wall
+        m.quad(pt(i, hw + 2.2, 0.01), pt(i + 1, hw + 2.2, 0.01), pt(i + 1, hw + 4.4, 0.01), pt(i, hw + 4.4, 0.01), g1);
+        m.quad(pt(i, hw + 4.4, 0.01), pt(i + 1, hw + 4.4, 0.01), pt(i + 1, hw + 6.4, 0.01), pt(i, hw + 6.4, 0.01), g2);
+        m.quad(pt(i, -hw - 4.4, 0.01), pt(i + 1, -hw - 4.4, 0.01), pt(i + 1, -hw - 2.2, 0.01), pt(i, -hw - 2.2, 0.01), g1);
+        m.quad(pt(i, -hw - 6.4, 0.01), pt(i + 1, -hw - 6.4, 0.01), pt(i + 1, -hw - 4.4, 0.01), pt(i, -hw - 4.4, 0.01), g2);
+        // low armco walls with a red flash every so often
+        const wallCol = (i >> 4) % 6 === 0 ? [0.85, 0.16, 0.14] : [0.78, 0.80, 0.84];
+        const wOff = hw + 6.6, wh = 0.95;
+        const a0 = pt(i, wOff, 0), a1 = pt(i + 1, wOff, 0);
+        m.quad([a0[0], a0[1] + wh, a0[2]], [a1[0], a1[1] + wh, a1[2]], [a1[0], a1[1], a1[2]], [a0[0], a0[1], a0[2]], wallCol);
+        const b0 = pt(i, -wOff, 0), b1 = pt(i + 1, -wOff, 0);
+        m.quad([b0[0], b0[1], b0[2]], [b1[0], b1[1], b1[2]], [b1[0], b1[1] + wh, b1[2]], [b0[0], b0[1] + wh, b0[2]], wallCol);
+    }
+
     // --- grass: coarse two-tone grid following track height nearby ---
     const b = cir.bounds, mar = 190;
     const gx0 = b.minX - mar, gz0 = b.minY - mar;
@@ -229,16 +249,24 @@ function buildWorld(cir, def, H, rng) {
         const nearStart = i < 26 || i > N - 26;
         const side = (i % 12 === 0) ? 1 : -1;
         const h = hAt(i);
-        if (nearStart && i % 12 === 0 && i > 3 && i < N - 3) {
-            const off = s.w / 2 + 13;
+        if (nearStart && i % 18 === 0 && i > 3 && i < N - 3) {
+            const off = s.w / 2 + 16;
             const x = s.x + s.nx * off, z = s.y + s.ny * off;
             const yaw = Math.atan2(s.ty, s.tx);
-            m.box(x, h + 2.2, z, 20, 4.4, 6, PAL.stand, -yaw);
-            m.box(x, h + 4.9, z, 21, 0.6, 7, PAL.standRoof, -yaw);
-            // crowd: colored cubes
+            // tiered stand with corner posts holding the roof (no more floating slabs)
+            m.box(x, h + 1.0, z, 20, 2.0, 7, [0.55, 0.58, 0.66], -yaw);
+            m.box(x + s.nx * 2, h + 2.6, z + s.ny * 2, 20, 1.6, 3.5, [0.48, 0.51, 0.60], -yaw);
+            for (const dx of [-9, 9]) {
+                for (const dzz of [-3, 3]) {
+                    const px2 = x + s.tx * dx + s.nx * dzz, pz2 = z + s.ty * dx + s.ny * dzz;
+                    m.box(px2, h + 3.4, pz2, 0.35, 3.2, 0.35, PAL.gantry, -yaw);
+                }
+            }
+            m.box(x, h + 5.1, z, 21, 0.45, 8, PAL.standRoof, -yaw);
+            // crowd: colored cubes on the tiers
             for (let q = 0; q < 12; q++) {
                 const cx2 = x + s.tx * (-9 + q * 1.6), cz2 = z + s.ty * (-9 + q * 1.6);
-                m.box(cx2 + s.nx * (rng() - 0.5) * 3, h + 3.6 + rng() * 0.8, cz2 + s.ny * (rng() - 0.5) * 3,
+                m.box(cx2 + s.nx * (rng() - 0.5) * 4, h + 2.3 + rng() * 1.4, cz2 + s.ny * (rng() - 0.5) * 4,
                       0.7, 0.7, 0.7, [0.4 + rng() * 0.6, 0.35 + rng() * 0.5, 0.4 + rng() * 0.6], 0);
             }
         } else if (s.kerb && i % 18 === 0) {
@@ -278,6 +306,30 @@ function buildWorld(cir, def, H, rng) {
         const y = 90 + rng() * 50, sc = 14 + rng() * 22;
         m.box(x, y, z, sc, sc * 0.28, sc * 0.55, [0.97, 0.98, 1.0], rng() * 3);
         m.box(x + sc * 0.4, y + sc * 0.1, z + sc * 0.2, sc * 0.6, sc * 0.22, sc * 0.4, [0.94, 0.96, 1.0], rng() * 3);
+    }
+
+    // --- horizon: base disc + a ring of low-poly mountains so the world
+    //     never ends in a flat sea-looking band ---
+    const ccx = (b.minX + b.maxX) / 2, ccz = (b.minY + b.maxY) / 2;
+    const baseR = Math.max(gw, gh) / 2 + 60;
+    for (let k = 0; k < 24; k++) {
+        const a0 = k / 24 * 2 * Math.PI, a1 = (k + 1) / 24 * 2 * Math.PI;
+        m.tri(ccx, -0.6, ccz,
+              ccx + Math.cos(a1) * 2400, -0.6, ccz + Math.sin(a1) * 2400,
+              ccx + Math.cos(a0) * 2400, -0.6, ccz + Math.sin(a0) * 2400,
+              0.20, 0.34, 0.18);
+    }
+    for (let k = 0; k < 30; k++) {
+        const a = k / 30 * 2 * Math.PI;
+        const r = baseR + 80 + rng() * 120;
+        const px = ccx + Math.cos(a) * r, pz = ccz + Math.sin(a) * r;
+        const hM = 45 + rng() * 75, wM = 130 + rng() * 130;
+        const perp = a + Math.PI / 2;
+        const col = rng() < 0.5 ? [0.40, 0.52, 0.62] : [0.35, 0.48, 0.58];
+        m.tri(px, hM, pz,
+              px + Math.cos(perp) * wM, 0, pz + Math.sin(perp) * wM,
+              px - Math.cos(perp) * wM, 0, pz - Math.sin(perp) * wM,
+              col[0], col[1], col[2]);
     }
 
     return m.pack();
@@ -497,7 +549,7 @@ class GLView {
         const targetFov = (mode === 'cockpit' ? 76 : 68) + Math.min(36, Math.abs(car.v) * 0.40) + boost;
         cam.fov += (targetFov - cam.fov) * Math.min(1, (dt || 0.016) * 5);
 
-        const proj = M4.persp(cam.fov * Math.PI / 180, vp.w / vp.h, 0.3, 900);
+        const proj = M4.persp(cam.fov * Math.PI / 180, vp.w / vp.h, 0.3, 3000);
         const view = M4.lookAt(cam.pos[0], cam.pos[1], cam.pos[2],
                                cam.tgt[0], cam.tgt[1], cam.tgt[2]);
 
@@ -505,7 +557,7 @@ class GLView {
         gl.uniformMatrix4fv(L.uProj, false, proj);
         gl.uniformMatrix4fv(L.uView, false, view);
         gl.uniform3fv(L.uFog, fog);
-        gl.uniform1f(L.uFogFar, wetness > 0.3 ? 380 : 640);
+        gl.uniform1f(L.uFogFar, wetness > 0.3 ? 420 : 1150);
         gl.uniform1f(L.uAlpha, 1.0);
 
         // world
