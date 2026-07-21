@@ -26,7 +26,9 @@ const M4 = {
     lookAt(ex, ey, ez, tx, ty, tz) {
         let zx = ex - tx, zy = ey - ty, zz = ez - tz;
         let zl = Math.hypot(zx, zy, zz) || 1; zx /= zl; zy /= zl; zz /= zl;
-        let xx = -zz, xy_ = 0, xz = zx;               // up = (0,1,0) cross
+        // x = up × z with up=(0,1,0)  →  (zz, 0, -zx). The previous negated
+        // version made a left-handed basis that rendered the world rolled 180°.
+        let xx = zz, xy_ = 0, xz = -zx;
         let xl = Math.hypot(xx, xy_, xz) || 1; xx /= xl; xz /= xl;
         const yx = zy * xz - zz * xy_, yy = zz * xx - zx * xz, yz = zx * xy_ - zy * xx;
         return new Float32Array([
@@ -122,7 +124,7 @@ function heightProfile(cir, amp) {
 
 /* ---------- world geometry ---------- */
 const PAL = {
-    road: [0.16, 0.16, 0.20], roadAlt: [0.175, 0.175, 0.215],
+    road: [0.145, 0.145, 0.185], roadAlt: [0.195, 0.195, 0.235],
     edge: [0.95, 0.95, 0.97],
     kerbR: [0.88, 0.16, 0.14], kerbW: [0.95, 0.95, 0.93],
     grassA: [0.28, 0.62, 0.26], grassB: [0.24, 0.55, 0.22],
@@ -149,7 +151,7 @@ function buildWorld(cir, def, H, rng) {
         const s = cir.at(i), hw = s.w / 2;
         const isStart = i < 2;
         const drs = cir.inDRS(i * cir.ds);
-        let col = (i >> 2) % 2 === 0 ? PAL.road : PAL.roadAlt;
+        let col = (i >> 1) % 2 === 0 ? PAL.road : PAL.roadAlt;   // ~13m stripes flicker past at speed
         if (drs) col = [col[0]*0.9 + PAL.drs[0]*0.25, col[1]*0.9 + PAL.drs[1]*0.25, col[2]*0.9 + PAL.drs[2]*0.25];
         if (isStart) {
             // checkered start strip
@@ -165,6 +167,13 @@ function buildWorld(cir, def, H, rng) {
         // white edge strips
         m.quad(pt(i, hw, 0.08), pt(i + 1, hw, 0.08), pt(i + 1, hw - 0.5, 0.08), pt(i, hw - 0.5, 0.08), PAL.edge);
         m.quad(pt(i, -hw + 0.5, 0.08), pt(i + 1, -hw + 0.5, 0.08), pt(i + 1, -hw, 0.08), pt(i, -hw, 0.08), PAL.edge);
+        // marker posts every ~26m — dense trackside detail is the strongest speed cue
+        if (i % 4 === 0) {
+            const pc = (i >> 2) % 2 === 0 ? [0.92, 0.18, 0.15] : [0.95, 0.95, 0.97];
+            const pl = pt(i, hw + 2.8, 0), pr = pt(i, -hw - 2.8, 0);
+            m.box(pl[0], pl[1] + 0.55, pl[2], 0.22, 1.1, 0.22, pc, 0);
+            m.box(pr[0], pr[1] + 0.55, pr[2], 0.22, 1.1, 0.22, pc, 0);
+        }
         // kerbs: raised, vivid
         if (s.kerb) {
             const kc = (i >> 1) % 2 === 0 ? PAL.kerbR : PAL.kerbW;
@@ -436,10 +445,11 @@ class GLView {
         gl.enableVertexAttribArray(L.aCol);
     }
 
-    render(session, car, mode, wetness, vp, dt) {
+    render(session, car, mode, wetness, vp, dt, timeS) {
         if (!this.ok || !this.cir) return;
         const gl = this.gl, L = this.loc;
         const cw = this.canvas.width, chh = this.canvas.height;
+        timeS = timeS || 0;
 
         gl.viewport(vp.x, chh - vp.y - vp.h, vp.w, vp.h);
         gl.enable(gl.SCISSOR_TEST);
@@ -457,12 +467,20 @@ class GLView {
         const cosH = Math.cos(car.heading), sinH = Math.sin(car.heading);
         let ex, ey, ez, tx, ty, tz;
         if (mode === 'cockpit') {
-            ex = car.x + cosH * 0.3; ez = car.y + sinH * 0.3; ey = h + 1.35;
-            tx = car.x + cosH * 30; tz = car.y + sinH * 30; ty = h + 0.8;
+            ex = car.x + cosH * 0.3; ez = car.y + sinH * 0.3; ey = h + 1.30;
+            tx = car.x + cosH * 30; tz = car.y + sinH * 30; ty = h + 0.75;
         } else {
-            const back = 9.5, up = 3.6;
+            const back = 7.8, up = 2.7;   // low + close = fast
             ex = car.x - cosH * back; ez = car.y - sinH * back; ey = h + up;
-            tx = car.x + cosH * 8; tz = car.y + sinH * 8; ty = h + 1.2;
+            tx = car.x + cosH * 10; tz = car.y + sinH * 10; ty = h + 1.0;
+        }
+        // high-speed camera shake
+        const shakeAmt = Math.pow(Math.min(1, Math.abs(car.v) / 85), 2) * 0.10;
+        if (shakeAmt > 0.005) {
+            const sh1 = Math.sin(timeS * 41) + Math.sin(timeS * 67) * 0.6;
+            const sh2 = Math.sin(timeS * 53 + 1.7) + Math.sin(timeS * 79) * 0.6;
+            ey += sh1 * shakeAmt; ty += sh1 * shakeAmt * 0.5;
+            ex += -sinH * sh2 * shakeAmt; ez += cosH * sh2 * shakeAmt;
         }
         // smooth (per-player camera so split screen doesn't thrash)
         const cam = this.cam(car.playerIndex >= 0 ? car.playerIndex : 'spec');
@@ -474,9 +492,10 @@ class GLView {
         cam.tgt[1] += (ty - cam.tgt[1]) * Math.min(1, k * 1.6);
         cam.tgt[2] += (tz - cam.tgt[2]) * Math.min(1, k * 1.6);
 
-        // speed-FOV (the PolyTrack feel)
-        const targetFov = (mode === 'cockpit' ? 74 : 66) + Math.min(28, Math.abs(car.v) * 0.28);
-        cam.fov += (targetFov - cam.fov) * Math.min(1, (dt || 0.016) * 4);
+        // speed-FOV — the biggest "we're flying" lever, plus extra kick on ERS
+        const boost = car.ersDeploying ? 6 : 0;
+        const targetFov = (mode === 'cockpit' ? 76 : 68) + Math.min(36, Math.abs(car.v) * 0.40) + boost;
+        cam.fov += (targetFov - cam.fov) * Math.min(1, (dt || 0.016) * 5);
 
         const proj = M4.persp(cam.fov * Math.PI / 180, vp.w / vp.h, 0.3, 900);
         const view = M4.lookAt(cam.pos[0], cam.pos[1], cam.pos[2],

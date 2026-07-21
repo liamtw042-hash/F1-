@@ -81,7 +81,16 @@ try {
     const clip = [0, 1, 2, 3].map(r => mvp[r] * p[0] + mvp[4 + r] * p[1] + mvp[8 + r] * p[2] + mvp[12 + r] * p[3]);
     const ndcZ = clip[2] / clip[3];
     if (!(ndcZ > -1 && ndcZ < 1)) throw new Error(`lookAt target not in frustum (ndc z=${ndcZ.toFixed(2)})`);
-    console.log('✓ matrix math: camera frustum sane');
+    // orientation: a point ABOVE the target must project HIGHER on screen
+    // (this is the regression test for the upside-down-world bug)
+    const pr = p2 => {
+        const c2 = [0, 1, 2, 3].map(r => mvp[r] * p2[0] + mvp[4 + r] * p2[1] + mvp[8 + r] * p2[2] + mvp[12 + r] * 1);
+        return { x: c2[0] / c2[3], y: c2[1] / c2[3] };
+    };
+    const above = pr([0, 3, 0]), center = pr([0, 0, 0]), right = pr([3, 0, 0]);
+    if (!(above.y > center.y)) throw new Error(`world is upside down: +Y projects to ndc ${above.y.toFixed(2)} vs ${center.y.toFixed(2)}`);
+    if (!(right.x > center.x)) throw new Error(`world is mirrored: +X projects left`);
+    console.log('✓ matrix math: frustum sane, world upright, not mirrored');
 } catch (e) { console.error(`✗ matrices: ${e.message}`); failures++; }
 
 if (failures) { console.error(`${failures} FAILURE(S)`); process.exit(1); }

@@ -257,6 +257,7 @@ function createCar(o) {
         gear: 1, rpm: 6000, throttle: 0, brake: 0,
         slide: false, offTrack: false, onKerb: false, gearFlash: 0,
         stuckT: 0, resetFlash: 0, gripRatio: 1, ghostT: 0, contact: 0,
+        isRemote: false, netPid: -1, _net: null, slip: 0,
 
         pitRequest: false, pitStopActive: false, pitTimer: 0, pitCount: 0, pendingCompound: null,
         finished: false, finishTime: 0, pos: 0, points: 0,
@@ -318,7 +319,8 @@ function stepCar(car, inp, cir, env, dt) {
         const traction = mu * (0.62 * m * CFG.G + 0.5 * df) * 1.1;
         F = Math.min(P / Math.max(car.v, 5), traction);
     }
-    const kd = CFG.K_DRAG * (car.drsOpen ? 0.80 : 1);
+    // slipstream tow + DRS both cut drag
+    const kd = CFG.K_DRAG * (car.drsOpen ? 0.80 : 1) * (1 - 0.30 * (car.slip || 0));
     const drag = kd * car.v * car.v + 0.012 * m * CFG.G + 0.3 * Math.abs(car.v) + (car.offTrack ? 900 + 45 * Math.abs(car.v) : 0);
     const Fb = brk * 0.92 * mu * (m * CFG.G + df);
 
@@ -572,8 +574,28 @@ class RaceSession {
         const usedDrivers = new Set();
         this.cars = [];
         this.brains = new Map();
+        this.isMirror = !!opts.mirror;
         const fuel = Math.min(110, this.totalLaps * 2.7 + 6);
         const startCompound = this.weather.wetness > 0.55 ? 'WET' : this.weather.wetness > 0.18 ? 'INTER' : 'MEDIUM';
+
+        // --- network client: mirror the host's exact car list, drive only ours ---
+        if (opts.mirror) {
+            opts.mirror.cars.forEach((mc, i) => {
+                const team = CFG.TEAMS[mc.teamIdx] || CFG.TEAMS[0];
+                const mine = mc.pid === opts.mirror.myPid && mc.pid >= 0;
+                const car = createCar({
+                    id: mc.nid, name: mc.name, num: mc.num, team,
+                    isPlayer: mine, playerIndex: mine ? 0 : -1,
+                    totalLaps: this.totalLaps,
+                    compound: NET.COMPOUND_IDX ? NET.COMPOUND_IDX[mc.comp] || 'MEDIUM' : 'MEDIUM',
+                    fuel
+                });
+                if (!mine) { car.isRemote = true; car.netPid = mc.pid; }
+                this.cars.push(car);
+            });
+            this._placeGrid(this.cars);
+            return;
+        }
 
         players.forEach((p, i) => {
             const team = CFG.TEAMS[p.teamIdx ?? 0];
@@ -587,14 +609,26 @@ class RaceSession {
             }));
         });
 
-        const aiCount = Math.min(opts.aiCount ?? 19, 20 - players.length);
+        // --- network host: friends' cars, driven by their packets ---
+        const remotes = opts.remotePlayers || [];
+        remotes.forEach((rp, i) => {
+            const team = CFG.TEAMS[rp.team ?? 2];
+            const car = createCar({
+                id: players.length + i, name: rp.name || 'Mate', num: 90 + rp.id, team,
+                totalLaps: this.totalLaps, compound: startCompound, fuel
+            });
+            car.isRemote = true; car.netPid = rp.id;
+            this.cars.push(car);
+        });
+
+        const aiCount = Math.min(opts.aiCount ?? 19, 20 - players.length - remotes.length);
         let added = 0;
         for (const d of CFG.DRIVERS) {
             if (added >= aiCount) break;
             if (usedDrivers.has(d.name)) continue;
             const dry = ['SOFT', 'MEDIUM', 'MEDIUM', 'HARD'][Math.floor(this.rng() * 4)];
             const car = createCar({
-                id: players.length + added, name: d.name, num: d.num, team: CFG.TEAMS[d.team],
+                id: players.length + remotes.length + added, name: d.name, num: d.num, team: CFG.TEAMS[d.team],
                 skill: d.skill, consistency: d.consistency, totalLaps: this.totalLaps,
                 compound: this.weather.wetness > 0.18 ? startCompound : dry, fuel
             });
@@ -605,10 +639,14 @@ class RaceSession {
 
         // Grid: qualifying-ish order — players in midfield-front, AI by skill
         const gridOrder = [...this.cars].sort((a, b) => {
-            const sa = a.isPlayer ? 0.93 : a.skill;
-            const sb = b.isPlayer ? 0.93 : b.skill;
+            const sa = (a.isPlayer || a.isRemote) ? 0.93 : a.skill;
+            const sb = (b.isPlayer || b.isRemote) ? 0.93 : b.skill;
             return sb - sa;
         });
+        this._placeGrid(gridOrder);
+    }
+
+    _placeGrid(gridOrder) {
         gridOrder.forEach((car, i) => {
             const arc = this.cir.length - 12 - i * 7.5;
             const gi = Math.round(arc / this.cir.ds);
@@ -642,21 +680,36 @@ class RaceSession {
         this.raceTime += dt;
         const env = { wetness: this.weather.wetness, ambient: 24 - this.weather.wetness * 8, raceTime: this.raceTime };
 
-        // DRS availability & gaps (arc-based)
+        // DRS availability, gaps, slipstream (arc-based)
         for (const c of this.cars) {
-            let gapM = Infinity;
+            let gapM = Infinity, towGap = Infinity;
             for (const o of this.cars) {
                 if (o === c || o.finished) continue;
                 const g = U.wrapDelta(o.arc - c.arc, this.cir.length);
                 const gg = g < 0 ? g + this.cir.length : g;
                 if (gg > 0.5 && gg < gapM) gapM = gg;
+                if (gg > 0.5 && gg < towGap && Math.abs(o.lat - c.lat) < 3) towGap = gg;
             }
             c.gapAheadSec = gapM / Math.max(c.v, 22);
             c.drsAvailable = this.cir.inDRS(c.arc) && c.lapsDone >= 1 && c.gapAheadSec < 1.4 && this.weather.wetness < 0.25;
+            // slipstream: tucked in behind a car ahead in your lane
+            c.slip = (towGap < 26 && c.v > 25 && this.weather.wetness < 0.4)
+                ? Math.max(0, 1 - towGap / 26) : 0;
         }
 
         // Step all cars
         for (const c of this.cars) {
+            if (c.isRemote) {
+                // network-driven: smooth toward the last packet, trust its lap count
+                if (globalThis.F1NET) globalThis.F1NET.smoothRemoteCar(c, this.cir, dt);
+                if (c._net && c._net.laps > c.lapsDone) {
+                    c.lapsDone = c._net.laps;
+                    c.currentLap = U.clamp(c.lapsDone + 1, 1, c.totalLaps);
+                    if (c.lapsDone >= c.totalLaps && !c.finished) { c.finished = true; c.finishTime = this.raceTime; }
+                }
+                continue;
+            }
+            if (this.isMirror && !c.isPlayer) continue;   // mirror sessions only simulate our car
             let inp;
             if (c.isPlayer) inp = playerInputs[c.playerIndex] || {};
             else inp = this.brains.get(c.id).compute(this.cars, env, dt);
@@ -709,31 +762,37 @@ class RaceSession {
                 if (d2 < 19.4 && d2 > 0.001 && !(a.ghostT > 0) && !(b.ghostT > 0)) {
                     const d = Math.sqrt(d2), overlap = (4.4 - d) / 2;
                     const ux = dx / d, uy = dy / d;
-                    a.x -= ux * overlap; a.y -= uy * overlap;
-                    b.x += ux * overlap; b.y += uy * overlap;
+                    // network cars are position-authoritative: push only local cars
+                    if (!a.isRemote) { a.x -= ux * overlap * (b.isRemote ? 2 : 1); a.y -= uy * overlap * (b.isRemote ? 2 : 1); }
+                    if (!b.isRemote) { b.x += ux * overlap * (a.isRemote ? 2 : 1); b.y += uy * overlap * (a.isRemote ? 2 : 1); }
                     // Damp only the chasing car, so the front car can always drive clear
                     const rear = U.wrapDelta(b.arc - a.arc, this.cir.length) > 0 ? a : b;
-                    rear.v *= 0.94;
+                    if (!rear.isRemote) rear.v *= 0.94;
                     a.contact = b.contact = 0.3;
                 }
             }
         }
 
-        // Positions & finish handling
-        const order = [...this.cars].sort((x, y) => {
-            if (x.finished && y.finished) return x.finishTime - y.finishTime;
-            if (x.finished) return -1;
-            if (y.finished) return 1;
-            return y.cumDist - x.cumDist;
-        });
-        order.forEach((c, i) => { c.pos = i + 1; c.gapLeaderM = order[0].cumDist - c.cumDist; });
+        // Positions & finish handling (mirror sessions take positions from packets)
+        if (!this.isMirror) {
+            const order = [...this.cars].sort((x, y) => {
+                if (x.finished && y.finished) return x.finishTime - y.finishTime;
+                if (x.finished) return -1;
+                if (y.finished) return 1;
+                return y.cumDist - x.cumDist;
+            });
+            order.forEach((c, i) => { c.pos = i + 1; c.gapLeaderM = order[0].cumDist - c.cumDist; });
 
-        const playersDone = this.cars.filter(c => c.isPlayer).every(c => c.finished);
-        const anyPlayers = this.cars.some(c => c.isPlayer);
-        const allDone = this.cars.every(c => c.finished);
-        if ((anyPlayers && playersDone) || allDone) {
-            this.graceT += dt;
-            if (this.graceT > (allDone ? 0.5 : 4)) this._finish(order);
+            const humans = this.cars.filter(c => c.isPlayer || c.isRemote);
+            const playersDone = humans.length > 0 && humans.every(c => c.finished);
+            const allDone = this.cars.every(c => c.finished);
+            if (playersDone || allDone) {
+                this.graceT += dt;
+                if (this.graceT > (allDone ? 0.5 : 4)) this._finish(order);
+            }
+        } else {
+            const leader = this.cars.find(c => c.pos === 1);
+            for (const c of this.cars) c.gapLeaderM = leader ? Math.max(0, leader.cumDist - c.cumDist) : 0;
         }
     }
 
@@ -751,7 +810,7 @@ class RaceSession {
         this.state = 'finished';
         this.results = order.map((c, i) => ({
             pos: i + 1, name: c.name, team: c.short, c1: c.c1,
-            isPlayer: c.isPlayer,
+            isPlayer: c.isPlayer, nid: c.id, pid: c.netPid,
             time: c.finished ? c.finishTime : this.raceTime,
             bestLap: c.bestLap, pits: c.pitCount,
             points: (CFG.POINTS[i] || 0) + (this.fastestLap.name === c.name && i < 10 ? 1 : 0),
@@ -1635,6 +1694,73 @@ class HUD {
             ctx.fillStyle = '#3a3f46';
             ctx.fillText('DRS', x + 48, y + 17);
         }
+        if (p.slip > 0.35) {
+            this.panel(x, y - 30, 96, 26, 6);
+            ctx.fillStyle = '#ffd24d';
+            ctx.font = 'bold 13px Arial';
+            ctx.fillText('⚡ TOW', x + 48, y - 17);
+        }
+    }
+
+    /* speed lines + ERS vignette — sells the speed on top of the 3D view */
+    speedFX(p, timeS) {
+        const ctx = this.ctx;
+        const v = Math.abs(p.v);
+        const t = Math.max(0, (v - 42) / 55);
+        if (t > 0.02) {
+            const cx = this.W / 2, cy = this.H * 0.44;
+            const n = Math.floor(6 + t * 22);
+            ctx.save();
+            ctx.strokeStyle = `rgba(255,255,255,${0.05 + t * 0.16})`;
+            ctx.lineWidth = 1.6;
+            ctx.beginPath();
+            for (let i = 0; i < n; i++) {
+                const a = (i / n) * Math.PI * 2 + Math.sin(i * 13.7) * 0.5;
+                const flick = (timeS * (7 + (i % 5)) + i * 0.77) % 1;
+                const r0 = this.H * (0.34 + flick * 0.25);
+                const r1 = r0 + this.H * (0.10 + t * 0.16);
+                ctx.moveTo(cx + Math.cos(a) * r0 * 1.35, cy + Math.sin(a) * r0);
+                ctx.lineTo(cx + Math.cos(a) * r1 * 1.35, cy + Math.sin(a) * r1);
+            }
+            ctx.stroke();
+            ctx.restore();
+        }
+        if (p.ersDeploying) {
+            const g = ctx.createRadialGradient(this.W / 2, this.H / 2, this.H * 0.35, this.W / 2, this.H / 2, this.H * 0.75);
+            g.addColorStop(0, 'rgba(0,120,255,0)');
+            g.addColorStop(1, 'rgba(0,140,255,0.22)');
+            ctx.fillStyle = g;
+            ctx.fillRect(0, 0, this.W, this.H);
+        }
+    }
+
+    startConfetti() {
+        this.confetti = [];
+        for (let i = 0; i < 140; i++) {
+            this.confetti.push({
+                x: Math.random() * this.W, y: -20 - Math.random() * this.H,
+                vx: (Math.random() - 0.5) * 40, vy: 60 + Math.random() * 90,
+                rot: Math.random() * 6.28, vr: (Math.random() - 0.5) * 8,
+                c: `hsl(${Math.floor(Math.random() * 360)},85%,60%)`, s: 5 + Math.random() * 7
+            });
+        }
+        this.confettiT = 7;
+    }
+
+    drawConfetti(dt) {
+        if (!this.confetti || this.confettiT <= 0) return;
+        this.confettiT -= dt;
+        const ctx = this.ctx;
+        for (const c of this.confetti) {
+            c.x += c.vx * dt; c.y += c.vy * dt; c.rot += c.vr * dt;
+            if (c.y > this.H + 20) { c.y = -20; c.x = Math.random() * this.W; }
+            ctx.save();
+            ctx.translate(c.x, c.y);
+            ctx.rotate(c.rot);
+            ctx.fillStyle = c.c;
+            ctx.fillRect(-c.s / 2, -c.s / 4, c.s, c.s / 2);
+            ctx.restore();
+        }
     }
 
     tower(session, player) {
@@ -1882,19 +2008,263 @@ class Menu {
         else if (screen === 'setup') this.renderSetup();
         else if (screen === 'results') this.renderResults(data);
         else if (screen === 'champ') this.renderChamp();
+        else if (screen === 'online') this.renderOnline();
+        else if (screen === 'netHost') this.renderNetHost();
+        else if (screen === 'netJoin') this.renderNetJoin();
+    }
+
+    renderOnline() {
+        const rtcOK = typeof RTCPeerConnection !== 'undefined';
+        this.el.innerHTML = `
+        <div class="setup-panel" style="width:640px">
+            <h2 class="setup-title">ONLINE WITH MATES</h2>
+            <p style="color:#99a;font-size:13px;line-height:1.6;margin-bottom:20px">
+                No accounts, no servers — you swap <b>invite codes</b> over any chat
+                (Google Chat, email, Docs, whatever you have at school).<br>
+                One person <b>HOSTS</b> and sends codes; up to 3 mates <b>JOIN</b>. AI fills the rest of the grid.
+            </p>
+            ${rtcOK ? '' : '<p style="color:#f66">⚠ This browser does not support WebRTC.</p>'}
+            <div class="setup-actions" style="justify-content:center">
+                <button class="btn btn-back" data-act="back">BACK</button>
+                <button class="btn btn-primary" data-act="host" ${rtcOK ? '' : 'disabled'}>HOST A RACE</button>
+                <button class="btn btn-primary" data-act="join" ${rtcOK ? '' : 'disabled'}>JOIN A RACE</button>
+            </div>
+        </div>`;
+        this.el.onclick = (e) => {
+            const b = e.target.closest('[data-act]');
+            if (!b) return;
+            if (b.dataset.act === 'back') this.show('main');
+            else if (b.dataset.act === 'host') this.show('netHost');
+            else if (b.dataset.act === 'join') this.show('netJoin');
+        };
+    }
+
+    renderNetHost() {
+        const g = this.game;
+        if (!g.netHost) g.netHost = new NetHost();
+        g.netHost.onLobbyChange = () => this._refreshHostLobby();
+        const tracks = Object.entries(TRACK_DATA);
+        this.el.innerHTML = `
+        <div class="setup-panel" style="width:760px">
+            <h2 class="setup-title">HOST — SEND CODES TO YOUR MATES</h2>
+            <div style="display:flex;gap:14px;margin-bottom:14px;flex-wrap:wrap">
+                <div>
+                    <div class="setup-label">TRACK</div>
+                    <select id="nhTrack" class="option-btn" style="padding:8px">
+                        ${tracks.map(([k, t]) => `<option value="${k}" ${k === this.sel.track ? 'selected' : ''}>${t.shortName}</option>`).join('')}
+                    </select>
+                </div>
+                <div>
+                    <div class="setup-label">LAPS</div>
+                    <select id="nhLaps" class="option-btn" style="padding:8px">
+                        ${[3, 5, 10].map(l => `<option ${l === this.sel.laps ? 'selected' : ''}>${l}</option>`).join('')}
+                    </select>
+                </div>
+                <div>
+                    <div class="setup-label">YOUR TEAM</div>
+                    <select id="nhTeam" class="option-btn" style="padding:8px">
+                        ${CFG.TEAMS.map((t, i) => `<option value="${i}" ${i === this.sel.team ? 'selected' : ''}>${t.name}</option>`).join('')}
+                    </select>
+                </div>
+            </div>
+            ${[0, 1, 2].map(i => `
+            <div style="border:1px solid #222;padding:10px;margin-bottom:8px" id="slot${i}">
+                <div style="display:flex;align-items:center;gap:10px">
+                    <span style="color:#e10600;font-weight:700;font-size:12px">MATE ${i + 1}</span>
+                    <button class="btn btn-secondary" style="padding:6px 14px;font-size:11px" data-invite="${i}">1· CREATE INVITE</button>
+                    <span id="slotStatus${i}" style="color:#667;font-size:12px">empty</span>
+                </div>
+                <div id="slotBody${i}"></div>
+            </div>`).join('')}
+            <div class="setup-actions">
+                <button class="btn btn-back" data-act="back">BACK</button>
+                <button class="btn btn-primary btn-large" data-act="go" id="nhStart" disabled>START RACE (0 mates)</button>
+            </div>
+        </div>`;
+
+        this.el.onclick = async (e) => {
+            const b = e.target.closest('[data-invite],[data-connect],[data-copy],[data-act]');
+            if (!b) return;
+            const d = b.dataset;
+            if (d.act === 'back') { this.show('online'); return; }
+            if (d.act === 'go') {
+                const remotes = g.netHost.slots.map(s => ({ id: s.id, name: s.name, team: s.team }));
+                if (!remotes.length) return;
+                g.startRace({
+                    trackKey: this.el.querySelector('#nhTrack').value,
+                    laps: +this.el.querySelector('#nhLaps').value,
+                    weather: 'DRY', difficulty: 'MEDIUM',
+                    players: [{ teamIdx: +this.el.querySelector('#nhTeam').value }],
+                    remotePlayers: remotes, netRole: 'host'
+                });
+                return;
+            }
+            if (d.invite !== undefined) {
+                const i = +d.invite;
+                b.disabled = true;
+                this._setSlot(i, 'creating code…', '');
+                try {
+                    const peer = new CGPPeer();
+                    g.netPeers[i] = peer;
+                    peer.onOpen = () => {
+                        g.netHost.attach(peer.chan);
+                        this._setSlot(i, '✓ CONNECTED — waiting for their name…', '');
+                    };
+                    peer.onClose = () => this._setSlot(i, '✗ disconnected', '');
+                    const code = await peer.createInvite();
+                    this._setSlot(i, 'send code ↓ then paste their reply', `
+                        <textarea readonly id="inv${i}" style="width:100%;height:44px;font-size:9px;background:#111;color:#8f8;border:1px solid #333;margin:6px 0">${code}</textarea>
+                        <button class="btn btn-secondary" style="padding:4px 10px;font-size:11px" data-copy="inv${i}">COPY INVITE</button>
+                        <textarea id="rep${i}" placeholder="2· paste mate's reply code here" style="width:100%;height:44px;font-size:9px;background:#111;color:#fff;border:1px solid #333;margin:6px 0"></textarea>
+                        <button class="btn btn-secondary" style="padding:4px 10px;font-size:11px" data-connect="${i}">3· CONNECT</button>`);
+                } catch (err) {
+                    this._setSlot(i, '✗ failed: ' + err.message, '');
+                }
+            }
+            if (d.connect !== undefined) {
+                const i = +d.connect;
+                try {
+                    await g.netPeers[i].acceptReply(this.el.querySelector(`#rep${i}`).value);
+                    this._setSlot(i, 'connecting…', this.el.querySelector(`#slotBody${i}`).innerHTML);
+                } catch (err) {
+                    this._setSlot(i, '✗ bad code — repaste and retry', this.el.querySelector(`#slotBody${i}`).innerHTML);
+                }
+            }
+            if (d.copy) {
+                const ta = this.el.querySelector('#' + d.copy);
+                ta.select();
+                try { await navigator.clipboard.writeText(ta.value); b.textContent = 'COPIED ✓'; }
+                catch { document.execCommand('copy'); b.textContent = 'COPIED ✓'; }
+            }
+        };
+    }
+
+    _setSlot(i, status, bodyHTML) {
+        const st = this.el.querySelector(`#slotStatus${i}`);
+        const bd = this.el.querySelector(`#slotBody${i}`);
+        if (st) st.textContent = status;
+        if (bd && bodyHTML !== undefined && bodyHTML !== null && bodyHTML !== bd.innerHTML) bd.innerHTML = bodyHTML;
+    }
+
+    _refreshHostLobby() {
+        const g = this.game;
+        const n = g.netHost ? g.netHost.slots.length : 0;
+        const btn = this.el.querySelector('#nhStart');
+        if (btn) {
+            btn.disabled = n === 0;
+            btn.textContent = `START RACE (${n} mate${n === 1 ? '' : 's'})`;
+        }
+        if (g.netHost) {
+            g.netHost.slots.forEach((s, idx) => {
+                for (let i = 0; i < 3; i++) {
+                    const st = this.el.querySelector(`#slotStatus${i}`);
+                    if (st && st.textContent.includes('waiting for their name') && idx === i) {
+                        st.textContent = `✓ ${s.name} joined (${CFG.TEAMS[s.team].short})`;
+                    }
+                }
+            });
+        }
+    }
+
+    renderNetJoin() {
+        const g = this.game;
+        this.el.innerHTML = `
+        <div class="setup-panel" style="width:640px">
+            <h2 class="setup-title">JOIN A MATE'S RACE</h2>
+            <div style="display:flex;gap:14px;margin-bottom:14px">
+                <div>
+                    <div class="setup-label">YOUR NAME</div>
+                    <input id="njName" maxlength="12" value="Player" style="background:#111;color:#fff;border:1px solid #333;padding:8px;width:140px">
+                </div>
+                <div>
+                    <div class="setup-label">TEAM</div>
+                    <select id="njTeam" class="option-btn" style="padding:8px">
+                        ${CFG.TEAMS.map((t, i) => `<option value="${i}">${t.name}</option>`).join('')}
+                    </select>
+                </div>
+            </div>
+            <div class="setup-label">1 · PASTE THE HOST'S INVITE CODE</div>
+            <textarea id="njInvite" style="width:100%;height:56px;font-size:9px;background:#111;color:#fff;border:1px solid #333;margin:6px 0"></textarea>
+            <button class="btn btn-secondary" data-act="reply">2 · CREATE MY REPLY CODE</button>
+            <div id="njOut" style="margin-top:10px"></div>
+            <div id="njStatus" style="color:#8f8;margin-top:10px;font-size:13px"></div>
+            <div class="setup-actions">
+                <button class="btn btn-back" data-act="back">BACK</button>
+            </div>
+        </div>`;
+
+        this.el.onclick = async (e) => {
+            const b = e.target.closest('[data-act],[data-copy]');
+            if (!b) return;
+            const d = b.dataset;
+            if (d.act === 'back') { this.show('online'); return; }
+            if (d.copy) {
+                const ta = this.el.querySelector('#' + d.copy);
+                ta.select();
+                try { await navigator.clipboard.writeText(ta.value); b.textContent = 'COPIED ✓'; }
+                catch { document.execCommand('copy'); b.textContent = 'COPIED ✓'; }
+                return;
+            }
+            if (d.act === 'reply') {
+                const code = this.el.querySelector('#njInvite').value.trim();
+                if (!code) return;
+                b.disabled = true;
+                const status = t => { const el = this.el.querySelector('#njStatus'); if (el) el.textContent = t; };
+                status('building reply…');
+                try {
+                    const peer = new CGPPeer();
+                    g.netPeers = [peer];
+                    const name = this.el.querySelector('#njName').value || 'Player';
+                    const team = +this.el.querySelector('#njTeam').value;
+                    peer.onOpen = () => {
+                        g.netClient = new NetClient(peer.chan, {
+                            onStart: (msg) => g.startNetRace(msg),
+                            onState: (msg) => {
+                                if (g.session && g.netRole === 'client') {
+                                    F1NET.applyStatePacket(g.session, msg, g._myNid);
+                                }
+                            },
+                            onEnd: (results) => {
+                                if (g.netRole !== 'client' || !g.session) return;
+                                for (const r of results) r.isPlayer = r.pid === g.netClient.id;
+                                g._netResults = results;
+                                g.session.state = 'finished';
+                            },
+                            onClose: () => {
+                                if (g.session) g.hud.addMessage('CONNECTION LOST', '#ff5544');
+                            }
+                        });
+                        g.netClient.hello(name, team);
+                        g.netRole = 'client';
+                        status('✓ CONNECTED! Waiting for the host to start the race…');
+                    };
+                    peer.onClose = () => status('✗ connection closed');
+                    const reply = await peer.answerInvite(code);
+                    this.el.querySelector('#njOut').innerHTML = `
+                        <div class="setup-label">3 · SEND THIS REPLY BACK TO THE HOST</div>
+                        <textarea readonly id="njReply" style="width:100%;height:56px;font-size:9px;background:#111;color:#8f8;border:1px solid #333;margin:6px 0">${reply}</textarea>
+                        <button class="btn btn-secondary" data-copy="njReply">COPY REPLY</button>`;
+                    status('waiting for host to connect…');
+                } catch (err) {
+                    status('✗ bad invite code — check you copied all of it');
+                    b.disabled = false;
+                }
+            }
+        };
     }
     hide() { this.el.style.display = 'none'; }
 
     renderMain() {
         this.el.innerHTML = `
         <div class="menu-logo">
-            <div class="logo-f1">F1</div>
-            <div class="logo-sub">RACING CHAMPIONSHIP</div>
+            <div class="logo-f1" style="font-size:72px">CRAZY</div>
+            <div class="logo-sub">GRAND PRIX</div>
         </div>
         <div class="menu-buttons">
             <button class="btn btn-primary" data-act="quick">QUICK RACE</button>
+            <button class="btn btn-primary" data-act="online" style="background:#0a7d3c">ONLINE WITH MATES</button>
             <button class="btn btn-secondary" data-act="custom">CUSTOM RACE</button>
-            <button class="btn btn-secondary" data-act="2p">2 PLAYER SPLIT</button>
+            <button class="btn btn-secondary" data-act="2p">2 PLAYER SPLIT (1 KEYBOARD)</button>
             <button class="btn btn-secondary" data-act="champ">CHAMPIONSHIP</button>
         </div>
         <div class="menu-controls">
@@ -1916,6 +2286,7 @@ class Menu {
             else if (act === 'custom') { this.sel.players = 1; this.show('setup'); }
             else if (act === '2p') { this.sel.players = 2; this.show('setup'); }
             else if (act === 'champ') this.show('champ');
+            else if (act === 'online') this.show('online');
         };
     }
 
@@ -2121,6 +2492,16 @@ class Game {
         this.acc = 0;
         this.last = 0;
 
+        // networking
+        this.netRole = null;        // 'host' | 'client' | null
+        this.netHost = null;        // NetHost instance (host)
+        this.netClient = null;      // NetClient instance (client)
+        this.netPeers = [];         // CGPPeer objects to keep alive
+        this._netFrame = 0;
+        this._myNid = -1;
+        this._netResults = null;
+        this._lastPos = [];
+
         window.addEventListener('keydown', (e) => {
             this.keys[e.code] = true;
             if (this.session && ['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Slash'].includes(e.code)) e.preventDefault();
@@ -2148,8 +2529,19 @@ class Game {
     startRace(opts) {
         this.session = new RaceSession({
             trackKey: opts.trackKey, laps: opts.laps, weather: opts.weather,
-            difficulty: opts.difficulty, players: opts.players, aiCount: 19
+            difficulty: opts.difficulty, players: opts.players, aiCount: opts.aiCount ?? 19,
+            remotePlayers: opts.remotePlayers, mirror: opts.mirror
         });
+        this.netRole = opts.netRole || null;
+        this._netResults = null;
+        this._lastPos = [];
+        this._confettiFired = false;
+        this.hud.confettiT = 0;
+        if (this.netRole === 'host' && this.netHost) {
+            this.netHost.broadcast(this.netHost.startMsg(this.session, {
+                trackKey: opts.trackKey, laps: opts.laps, weather: opts.weather, difficulty: opts.difficulty
+            }));
+        }
         this.isChamp = !!opts.champ;
         this.renderer.buildTrack(this.session.cir, TRACK_DATA[opts.trackKey]);
         this.r3d.build(this.session.cir, TRACK_DATA[opts.trackKey], Math.random);
@@ -2167,6 +2559,22 @@ class Game {
         this.menu.hide();
         this.canvas.style.display = 'block';
         this.hud.addMessage(`${this.session.cir.name} — ${opts.laps} LAPS`, '#ffffff');
+    }
+
+    /* client-side: host pressed start — build the mirror session and go */
+    startNetRace(startMsg) {
+        const myPid = this.netClient ? this.netClient.id : -1;
+        const myCar = startMsg.cars.find(c => c.pid === myPid);
+        this._myNid = myCar ? myCar.nid : -1;
+        this.startRace({
+            trackKey: startMsg.settings.trackKey,
+            laps: startMsg.settings.laps,
+            weather: startMsg.settings.weather,
+            difficulty: startMsg.settings.difficulty,
+            players: [],
+            mirror: { cars: startMsg.cars, myPid },
+            netRole: 'client'
+        });
     }
 
     playerInput(pi) {
@@ -2189,6 +2597,7 @@ class Game {
 
         const s = this.session;
         if (!this.paused && s.state !== 'finished') {
+            if (this.netRole === 'host' && this.netHost) this.netHost.applyClientStates(s);
             this.acc += dt;
             const inputs = [this.playerInput(0), this.playerInput(1)];
             let steps = 0;
@@ -2198,6 +2607,29 @@ class Game {
                 steps++;
             }
             if (steps === 5) this.acc = 0;
+
+            // network sync
+            this._netFrame++;
+            if (this.netRole === 'host' && this.netHost && this._netFrame % 4 === 0) {
+                this.netHost.broadcast(this.netHost.stateMsg(s));
+            } else if (this.netRole === 'client' && this.netClient && this._netFrame % 3 === 0) {
+                const mine = s.cars.find(c => c.isPlayer);
+                if (mine) this.netClient.sendState(mine);
+            }
+
+            // position change popups for local players
+            for (const p of s.cars.filter(c => c.isPlayer)) {
+                const prev = this._lastPos[p.playerIndex];
+                if (s.state === 'racing' && prev && prev !== p.pos && s.raceTime > 5) {
+                    if (p.pos < prev) this.hud.addMessage(`P${p.pos}  ▲ OVERTAKE!`, '#00ff88');
+                    else this.hud.addMessage(`P${p.pos}  ▼`, '#ff8866');
+                }
+                this._lastPos[p.playerIndex] = p.pos;
+                if (p.finished && p.pos <= 3 && !this._confettiFired) {
+                    this._confettiFired = true;
+                    this.hud.startConfetti();
+                }
+            }
         }
 
         // drain events → HUD
@@ -2219,8 +2651,8 @@ class Game {
             ctx.setTransform(1, 0, 0, 1, 0, 0);
             ctx.clearRect(0, 0, 1280, 720);
             if (players.length > 1) {
-                this.glv.render(s, players[0], this.viewMode, wet, { x: 0, y: 0, w: 1280, h: 360 }, dt);
-                this.glv.render(s, players[1], this.viewMode, wet, { x: 0, y: 360, w: 1280, h: 360 }, dt);
+                this.glv.render(s, players[0], this.viewMode, wet, { x: 0, y: 0, w: 1280, h: 360 }, dt, s.raceTime);
+                this.glv.render(s, players[1], this.viewMode, wet, { x: 0, y: 360, w: 1280, h: 360 }, dt, s.raceTime);
                 if (this.viewMode === 'cockpit') {
                     ctx.save(); this.r3d.drawCockpit(ctx, 1280, 360, players[0], s.raceTime); ctx.restore();
                     ctx.save(); ctx.translate(0, 360); this.r3d.drawCockpit(ctx, 1280, 360, players[1], s.raceTime); ctx.restore();
@@ -2233,11 +2665,13 @@ class Game {
                 this.hud.msgs(dt);
                 if (s.state === 'countdown') this.hud.lights(s);
             } else {
-                this.glv.render(s, players[0], this.viewMode, wet, { x: 0, y: 0, w: 1280, h: 720 }, dt);
+                this.glv.render(s, players[0], this.viewMode, wet, { x: 0, y: 0, w: 1280, h: 720 }, dt, s.raceTime);
                 if (this.viewMode === 'cockpit') this.r3d.drawCockpit(ctx, 1280, 720, players[0], s.raceTime);
+                this.hud.speedFX(players[0], s.raceTime);
                 this.hud.cockpitMode = this.viewMode === 'cockpit';
                 this.hud.draw(s, players[0], this.renderer, dt);
                 this.hud.cockpitMode = false;
+                this.hud.drawConfetti(dt);
             }
             if (wet > 0.05) this.r3d.drawRain(ctx, 1280, 720, wet);
         } else if (players.length > 1) {
@@ -2297,12 +2731,16 @@ class Game {
     endRace(aborted) {
         const s = this.session;
         this._resultsShown = false;
-        let results = s.results;
+        let results = this._netResults || s.results;
         if (!results) {
             const order = [...s.cars].sort((a, b) => a.pos - b.pos);
             s._finish(order);
             results = s.results;
         }
+        if (this.netRole === 'host' && this.netHost && !aborted) {
+            this.netHost.broadcast({ t: 'end', results });
+        }
+        this.netRole = null;
         this.session = null;
         this.canvas.style.display = 'none';
         if (this.glCanvas) this.glCanvas.style.display = 'none';
