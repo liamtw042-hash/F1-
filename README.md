@@ -15,10 +15,14 @@ A complete F1 racing game that runs in your browser — no install, no build ste
   deployment/harvesting, fuel burn, tyre wear + temperature across 5 compounds
 - **Weather** — dry, light rain, heavy rain, or dynamic *Changing* conditions where
   rain arrives mid-race and the whole field dives for inters
+- **First-person cockpit view** — halo, mirrors, rotating steering wheel with dash
+  display, team-coloured nose, perspective road with kerbs and fog, trackside
+  trees/ad boards/grandstands, sky and sun that pan as you turn. Press **C** for
+  chase cam or the classic top-down view
 - **Race weekend structure** — grid start with lights, sectors, lap timing, fastest
   lap, pit stops, position tower, mini-map
 - **Championship mode** — 5-round season with persistent standings (saved locally)
-- **2-player split control** on one keyboard
+- **2-player split-screen** on one keyboard — each player gets their own cockpit
 
 ## Controls
 
@@ -30,6 +34,7 @@ A complete F1 racing game that runs in your browser — no install, no build ste
 | ERS boost | Left Shift | Right Shift |
 | Pit stop | P | / |
 | Reset car | R | \ |
+| Camera (cockpit/chase/top) | C | shared |
 | Pause / Mute | Esc / M | — |
 
 **Tips:** brake before the corner, not in it. DRS only opens in the green zones
@@ -43,5 +48,6 @@ The whole game is two files: `js/tracks.js` (circuit data) and `js/f1.js` (engin
 The race core is headless and fully testable:
 
 ```bash
-npm test        # simulates full AI races on all 5 circuits and checks lap sanity
+npm test                # simulates full AI races on all 5 circuits, checks lap sanity
+node test/render3d.js   # renders thousands of first-person frames headless, checks for crashes
 ```
