@@ -1456,7 +1456,7 @@ class HUD {
         ctx.textBaseline = 'middle';
 
         this.topBar(session, player);
-        this.speedo(player);
+        if (!this.cockpitMode) this.speedo(player);
         this.tyres(player);
         this.bars(player);
         this.drsBox(player);
@@ -2107,6 +2107,8 @@ class Game {
         this.canvas.height = 720;
         this.renderer = new Renderer(this.canvas);
         this.r3d = new Renderer3D();
+        this.glCanvas = document.getElementById('glCanvas');
+        this.glv = (this.glCanvas && typeof GLView !== 'undefined') ? new GLView(this.glCanvas) : null;
         this.hud = new HUD(this.canvas.getContext('2d'), 1280, 720);
         this.audio = new AudioSys();
         this.menu = new Menu(this);
@@ -2114,7 +2116,7 @@ class Game {
         this.session = null;
         this.paused = false;
         this.isChamp = false;
-        this.viewMode = 'cockpit';   // cockpit | chase | top
+        this.viewMode = 'chase';   // chase | cockpit | top
         this.keys = {};
         this.acc = 0;
         this.last = 0;
@@ -2125,7 +2127,7 @@ class Game {
             if (e.code === 'Escape' && this.session) this.paused = !this.paused;
             if (e.code === 'KeyM') this.audio.toggleMute();
             if (e.code === 'KeyC' && this.session) {
-                this.viewMode = { cockpit: 'chase', chase: 'top', top: 'cockpit' }[this.viewMode];
+                this.viewMode = { chase: 'cockpit', cockpit: 'top', top: 'chase' }[this.viewMode];
                 this.hud.addMessage(`CAMERA: ${this.viewMode.toUpperCase()}`, '#88ccff');
             }
             if (e.code === 'KeyP' && this.session) {
@@ -2151,6 +2153,11 @@ class Game {
         this.isChamp = !!opts.champ;
         this.renderer.buildTrack(this.session.cir, TRACK_DATA[opts.trackKey]);
         this.r3d.build(this.session.cir, TRACK_DATA[opts.trackKey], Math.random);
+        if (this.glv && this.glv.ok) {
+            const teams = [...new Map(this.session.cars.map(c => [c.short, c.team])).values()];
+            this.glv.load(this.session.cir, TRACK_DATA[opts.trackKey], teams);
+            this.glCanvas.style.display = 'block';
+        }
         this.renderer.particles = [];
         const p0 = this.session.cars[0];
         this.renderer.camX = p0.x; this.renderer.camY = p0.y;
@@ -2201,11 +2208,38 @@ class Game {
         const players = s.cars.filter(c => c.isPlayer);
         const wet = s.weather.wetness;
         const ctx = this.canvas.getContext('2d');
+        const glOK = this.glv && this.glv.ok;
         if (this.viewMode === 'top') {
             this.renderer.follow(players, dt);
             this.renderer.frame(s, players, wet);
             this.hud.draw(s, players[0], this.renderer, dt);
             if (players.length > 1) this.p2Hud(players[1]);
+        } else if (glOK) {
+            // WebGL low-poly renderer; 2D canvas on top holds the HUD only
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.clearRect(0, 0, 1280, 720);
+            if (players.length > 1) {
+                this.glv.render(s, players[0], this.viewMode, wet, { x: 0, y: 0, w: 1280, h: 360 }, dt);
+                this.glv.render(s, players[1], this.viewMode, wet, { x: 0, y: 360, w: 1280, h: 360 }, dt);
+                if (this.viewMode === 'cockpit') {
+                    ctx.save(); this.r3d.drawCockpit(ctx, 1280, 360, players[0], s.raceTime); ctx.restore();
+                    ctx.save(); ctx.translate(0, 360); this.r3d.drawCockpit(ctx, 1280, 360, players[1], s.raceTime); ctx.restore();
+                }
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                ctx.fillStyle = '#000';
+                ctx.fillRect(0, 358, 1280, 4);
+                this.hud.splitStrip(players[0], { x: 0, y: 0 }, 'P1', '#ffffff');
+                this.hud.splitStrip(players[1], { x: 0, y: 360 }, 'P2', '#4db8ff');
+                this.hud.msgs(dt);
+                if (s.state === 'countdown') this.hud.lights(s);
+            } else {
+                this.glv.render(s, players[0], this.viewMode, wet, { x: 0, y: 0, w: 1280, h: 720 }, dt);
+                if (this.viewMode === 'cockpit') this.r3d.drawCockpit(ctx, 1280, 720, players[0], s.raceTime);
+                this.hud.cockpitMode = this.viewMode === 'cockpit';
+                this.hud.draw(s, players[0], this.renderer, dt);
+                this.hud.cockpitMode = false;
+            }
+            if (wet > 0.05) this.r3d.drawRain(ctx, 1280, 720, wet);
         } else if (players.length > 1) {
             // split screen: P1 top, P2 bottom
             ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -2271,6 +2305,7 @@ class Game {
         }
         this.session = null;
         this.canvas.style.display = 'none';
+        if (this.glCanvas) this.glCanvas.style.display = 'none';
         if (this.isChamp && !aborted) this.menu.recordChampResults(results);
         this.menu.show(aborted ? 'main' : 'results', { results, champRound: this.isChamp });
     }

@@ -3,6 +3,7 @@
 // computed path length matches lapLength (real meters). Widths are meters as-is.
 const TRACK_DATA = {
     monaco: {
+        hills: 4,
         name: 'Monaco Grand Prix', shortName: 'Monaco', country: 'Monte Carlo',
         lapLength: 3337, record: 71.909, grass: '#20301c', runoff: '#3a3a38',
         sectors: [0.33, 0.66], pitEntry: 0.96,
@@ -30,6 +31,7 @@ const TRACK_DATA = {
     },
 
     spa: {
+        hills: 16,
         name: 'Belgian Grand Prix', shortName: 'Spa', country: 'Belgium',
         lapLength: 7004, record: 105.792, grass: '#1c2e1a', runoff: '#3b3b36',
         sectors: [0.33, 0.66], pitEntry: 0.95,
@@ -57,6 +59,7 @@ const TRACK_DATA = {
     },
 
     silverstone: {
+        hills: 7,
         name: 'British Grand Prix', shortName: 'Silverstone', country: 'United Kingdom',
         lapLength: 5891, record: 87.097, grass: '#22301e', runoff: '#3c3c38',
         sectors: [0.33, 0.66], pitEntry: 0.95,
@@ -84,6 +87,7 @@ const TRACK_DATA = {
     },
 
     monza: {
+        hills: 4,
         name: 'Italian Grand Prix', shortName: 'Monza', country: 'Italy',
         lapLength: 5793, record: 80.872, grass: '#1e2c18', runoff: '#3c3c38',
         sectors: [0.30, 0.65], pitEntry: 0.94,
@@ -112,6 +116,7 @@ const TRACK_DATA = {
     },
 
     suzuka: {
+        hills: 11,
         name: 'Japanese Grand Prix', shortName: 'Suzuka', country: 'Japan',
         lapLength: 5807, record: 90.983, grass: '#1c2a24', runoff: '#3a3a38',
         sectors: [0.35, 0.65], pitEntry: 0.96,

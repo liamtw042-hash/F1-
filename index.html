@@ -23,18 +23,22 @@
 </head>
 <body>
 
-<canvas id="gameCanvas" style="display:none"></canvas>
+<canvas id="glCanvas" width="1280" height="720" style="display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:1"></canvas>
+<canvas id="gameCanvas" style="display:none;z-index:2"></canvas>
 <div id="menu"></div>
 
 <script src="js/tracks.js"></script>
+<script src="js/gl.js"></script>
 <script src="js/f1.js"></script>
 <script>
-    // Scale canvas to fit window while keeping 16:9
+    // Scale canvases to fit window while keeping 16:9
     function fit() {
-        const c = document.getElementById('gameCanvas');
         const s = Math.min(window.innerWidth / 1280, window.innerHeight / 720);
-        c.style.width = Math.round(1280 * s) + 'px';
-        c.style.height = Math.round(720 * s) + 'px';
+        for (const id of ['gameCanvas', 'glCanvas']) {
+            const c = document.getElementById(id);
+            c.style.width = Math.round(1280 * s) + 'px';
+            c.style.height = Math.round(720 * s) + 'px';
+        }
     }
     fit();
     window.addEventListener('resize', fit);

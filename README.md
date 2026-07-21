@@ -15,10 +15,13 @@ A complete F1 racing game that runs in your browser — no install, no build ste
   deployment/harvesting, fuel burn, tyre wear + temperature across 5 compounds
 - **Weather** — dry, light rain, heavy rain, or dynamic *Changing* conditions where
   rain arrives mid-race and the whole field dives for inters
-- **First-person cockpit view** — halo, mirrors, rotating steering wheel with dash
-  display, team-coloured nose, perspective road with kerbs and fog, trackside
-  trees/ad boards/grandstands, sky and sun that pan as you turn. Press **C** for
-  chase cam or the classic top-down view
+- **Low-poly 3D graphics (WebGL)** — flat-shaded PolyTrack-style world: rolling
+  elevation on every circuit (Spa climbs 16m!), two-tone grass, vivid raised
+  kerbs, checkered start line under a start gantry, low-poly trees, ad boards,
+  grandstands with crowds, clouds, distance fog, and a chase camera whose FOV
+  widens with speed. Press **C** for cockpit view (halo, mirrors, rotating
+  steering wheel) or classic top-down. Falls back to a canvas renderer if
+  WebGL is unavailable
 - **Race weekend structure** — grid start with lights, sectors, lap timing, fastest
   lap, pit stops, position tower, mini-map
 - **Championship mode** — 5-round season with persistent standings (saved locally)
@@ -49,5 +52,6 @@ The race core is headless and fully testable:
 
 ```bash
 npm test                # simulates full AI races on all 5 circuits, checks lap sanity
-node test/render3d.js   # renders thousands of first-person frames headless, checks for crashes
+node test/gl-geom.js    # builds all 3D track worlds + car meshes, checks geometry
+node test/render3d.js   # renders thousands of fallback-renderer frames headless
 ```
