@@ -259,6 +259,8 @@ function createCar(o) {
         slide: false, offTrack: false, onKerb: false, gearFlash: 0,
         stuckT: 0, resetFlash: 0, gripRatio: 1, ghostT: 0, contact: 0,
         isRemote: false, netPid: -1, _net: null, slip: 0,
+        wheelAng: 0, slideT: 0, colCd: 0, wingDmg: false, gapBehindSec: 99,
+        _curLap: null, _bestLap: null, deltaBest: null,
 
         pitRequest: false, pitStopActive: false, pitTimer: 0, pitCount: 0, pendingCompound: null,
         finished: false, finishTime: 0, pos: 0, points: 0,
@@ -277,7 +279,7 @@ function stepCar(car, inp, cir, env, dt) {
         if (car.pitTimer <= 0) {
             car.pitStopActive = false;
             car.compound = car.pendingCompound || car.compound;
-            car.wear = 0; car.temp = 55;
+            car.wear = 0; car.temp = 55; car.wingDmg = false;
             car.pitRequest = false; car.pitCount++;
             car.justPitted = true;
             car.lastPitT = env.raceTime;
@@ -304,7 +306,10 @@ function stepCar(car, inp, cir, env, dt) {
     car.onKerb = !!s.kerb && Math.abs(car.lat) > halfW - 1.4 && !car.offTrack;
     const surfF = car.offTrack ? 0.42 : 1;
 
-    const mu = CFG.MU * compGrip * wearF * tempF * surfF;
+    let mu = CFG.MU * compGrip * wearF * tempF * surfF;
+    if (car.slideT > 0) { car.slideT -= dt; mu *= 0.55; }        // destabilised by contact
+    if (car.wingDmg) mu *= 0.97;                                  // missing front wing endplate
+    if (car.colCd > 0) car.colCd -= dt;
     car.gripRatio = mu / CFG.MU;
 
     const m = CFG.MASS + car.fuel;
@@ -315,7 +320,7 @@ function stepCar(car, inp, cir, env, dt) {
     let F = 0;
     car.ersDeploying = !!inp.ers && car.ers > 1000 && thr > 0.2 && !car.offTrack;
     if (thr > 0 && car.v >= -0.1) {
-        let P = CFG.POWER * thr * (car.fuel <= 0 ? 0.4 : 1);
+        let P = CFG.POWER * thr * (car.fuel <= 0 ? 0.4 : 1) * (car.wingDmg ? 0.93 : 1);
         if (car.ersDeploying) P += CFG.ERS_POWER;
         const traction = mu * (0.62 * m * CFG.G + 0.5 * df) * 1.1;
         F = Math.min(P / Math.max(car.v, 5), traction);
@@ -339,12 +344,13 @@ function stepCar(car, inp, cir, env, dt) {
     const kDes = Math.abs(Math.tan(delta)) / CFG.WHEELBASE;
     const kMax = aLatMax / Math.max(car.v * car.v, 30);
     const kEff = Math.min(kDes, kMax);
-    car.slide = kDes > kMax * 1.03 && Math.abs(car.v) > 8;
+    car.slide = (kDes > kMax * 1.03 && Math.abs(car.v) > 8) || car.slideT > 0.2;
     if (car.slide) car.v -= car.v * 0.38 * Math.min(1, kDes / kMax - 1) * dt;
     car.heading += car.v * kEff * Math.sign(delta || car.steerS) * dt * (car.v < 0 ? -1 : 1);
     car.heading = U.wrapAng(car.heading);
 
     moveCar(car, cir, dt);
+    car.wheelAng = (car.wheelAng + (car.v / 0.34) * dt) % (Math.PI * 2);
 
     // --- ERS ---
     if (car.ersDeploying) car.ers = Math.max(0, car.ers - CFG.ERS_POWER * dt);
@@ -692,6 +698,14 @@ class RaceSession {
                 if (gg > 0.5 && gg < towGap && Math.abs(o.lat - c.lat) < 3) towGap = gg;
             }
             c.gapAheadSec = gapM / Math.max(c.v, 22);
+            let gapB = Infinity;
+            for (const o of this.cars) {
+                if (o === c || o.finished) continue;
+                const g2 = U.wrapDelta(c.arc - o.arc, this.cir.length);
+                const gg2 = g2 < 0 ? g2 + this.cir.length : g2;
+                if (gg2 > 0.5 && gg2 < gapB) gapB = gg2;
+            }
+            c.gapBehindSec = gapB / Math.max(c.v, 22);
             c.drsAvailable = this.cir.inDRS(c.arc) && c.lapsDone >= 1 && c.gapAheadSec < 1.4 && this.weather.wetness < 0.25;
             // slipstream: tucked in behind a car ahead in your lane
             c.slip = (towGap < 26 && c.v > 25 && this.weather.wetness < 0.4)
@@ -729,7 +743,34 @@ class RaceSession {
                     this.msg(`${c.name} finishes P${c.pos}`, '#ffcc00');
                 }
             }
-            if (c.justPitted && c.isPlayer) this.msg(`PIT COMPLETE — ${CFG.COMPOUNDS[c.compound].name} tyres`, '#00ff88');
+            if (c.justPitted && c.isPlayer) { this.msg(`PIT COMPLETE — ${CFG.COMPOUNDS[c.compound].name} tyres, wing repaired`, '#00ff88'); c._engTyre = false; }
+
+            // live delta to personal best lap + race engineer radio
+            if (c.isPlayer && this.state === 'racing' && !c.finished) {
+                const nBk = (this.cir.N >> 3) + 2;
+                if (!c._curLap) c._curLap = new Float32Array(nBk).fill(-1);
+                const bk = Math.min(nBk - 1, c.idx >> 3);
+                const el = this.raceTime - c.lapStartT;
+                if (c._curLap[bk] < 0) c._curLap[bk] = el;
+                c.deltaBest = (c._bestLap && c._bestLap[bk] >= 0) ? el - c._bestLap[bk] : null;
+
+                if (c.wear > 0.65 && !c._engTyre) {
+                    c._engTyre = true;
+                    this.msg(`ENGINEER: tyres at ${Math.round((1 - c.wear) * 100)}% — box soon`, '#ffcc66');
+                }
+                if (c.gapBehindSec < 0.8 && c.v > 30 && this.raceTime - (c._engDef || -99) > 20) {
+                    c._engDef = this.raceTime;
+                    this.msg('ENGINEER: car behind in DRS range — defend!', '#ffcc66');
+                }
+                if (c.lapsDone === c.totalLaps - 1 && !c._engFinal) {
+                    c._engFinal = true;
+                    this.msg('ENGINEER: final lap — everything you\'ve got!', '#ffcc66');
+                }
+            }
+            if (c.justLapped && c.isPlayer) {
+                if (c._curLap && Math.abs(c.lastLap - c.bestLap) < 0.001) c._bestLap = c._curLap;
+                c._curLap = null;
+            }
             if (c.justReset && c.isPlayer) this.msg('CAR RESET TO TRACK', '#ffaa00');
 
             // Pit entry
@@ -766,10 +807,46 @@ class RaceSession {
                     // network cars are position-authoritative: push only local cars
                     if (!a.isRemote) { a.x -= ux * overlap * (b.isRemote ? 2 : 1); a.y -= uy * overlap * (b.isRemote ? 2 : 1); }
                     if (!b.isRemote) { b.x += ux * overlap * (a.isRemote ? 2 : 1); b.y += uy * overlap * (a.isRemote ? 2 : 1); }
-                    // Damp only the chasing car, so the front car can always drive clear
-                    const rear = U.wrapDelta(b.arc - a.arc, this.cir.length) > 0 ? a : b;
-                    if (!rear.isRemote) rear.v *= 0.94;
                     a.contact = b.contact = 0.3;
+                    // momentum contact: the diving car usually comes off worse —
+                    // unless it lands a clean hit on the leader's rear quarter
+                    const rear = U.wrapDelta(b.arc - a.arc, this.cir.length) > 0 ? a : b;
+                    const front = rear === a ? b : a;
+                    if (rear.colCd <= 0) {
+                        rear.colCd = 0.5;
+                        const dv = rear.v - front.v;
+                        const latDiff = rear.lat - front.lat;
+                        const side = latDiff >= 0 ? 1 : -1;
+                        const goodHit = dv > 8 && Math.abs(latDiff) > 0.7 && Math.abs(latDiff) < 2.4;
+                        const headOn = Math.abs(latDiff) <= 0.7 && dv > 4;
+                        if (goodHit) {
+                            // bump-and-run: the car ahead gets loose
+                            if (!front.isRemote) {
+                                front.slideT = Math.max(front.slideT, 1.1);
+                                front.heading += side * 0.10;
+                                front.v *= 0.93;
+                            }
+                            if (!rear.isRemote) { rear.v *= 0.965; rear.heading -= side * 0.03; }
+                            if (rear.isPlayer) this.msg('CLEAN HIT — they\'re loose!', '#00ff88');
+                            if (front.isPlayer) this.msg('HIT FROM BEHIND — catch the slide!', '#ff8844');
+                        } else if (headOn) {
+                            // punted their gearbox: you lose, they barely notice
+                            if (!rear.isRemote) {
+                                rear.v *= 0.82;
+                                rear.slideT = Math.max(rear.slideT, 0.8);
+                                rear.heading += side * 0.14;
+                                if (dv > 12 && !rear.wingDmg) {
+                                    rear.wingDmg = true;
+                                    if (rear.isPlayer) this.msg('FRONT WING DAMAGE — box to repair!', '#ff5544');
+                                }
+                            }
+                            if (!front.isRemote) front.v *= 0.985;
+                            if (rear.isPlayer) this.msg('CONTACT — you came off worse', '#ff8844');
+                        } else {
+                            if (!rear.isRemote) { rear.v *= 0.955; rear.heading += side * 0.05; }
+                        }
+                        if (rear.isPlayer || front.isPlayer) this.events.push({ snd: 'thud' });
+                    }
                 }
             }
         }
@@ -1562,9 +1639,25 @@ class HUD {
         ctx.fillText(U.fmtTime(session.raceTime - p.lapStartT), this.W / 2, 15);
         ctx.font = '11px Consolas, monospace';
         ctx.fillStyle = '#9aa';
-        ctx.fillText('LAST ' + U.fmtTime(p.lastLap), this.W / 2 - 80, 34);
+        ctx.fillText('LAST ' + U.fmtTime(p.lastLap), this.W / 2 - 90, 34);
         ctx.fillStyle = '#c66bff';
-        ctx.fillText('BEST ' + U.fmtTime(p.bestLap), this.W / 2 + 80, 34);
+        ctx.fillText('BEST ' + U.fmtTime(p.bestLap), this.W / 2 + 90, 34);
+        // live delta to personal best
+        if (p.deltaBest !== null && p.deltaBest !== undefined && isFinite(p.bestLap)) {
+            ctx.font = 'bold 13px Consolas, monospace';
+            ctx.fillStyle = p.deltaBest <= 0 ? '#22ff77' : '#ff5544';
+            ctx.fillText((p.deltaBest <= 0 ? '' : '+') + p.deltaBest.toFixed(2), this.W / 2, 34);
+        }
+        // sector progress pips
+        for (let si = 0; si < 3; si++) {
+            const sx = this.W / 2 - 42 + si * 30;
+            let col = '#333a44';
+            if (p.sector > si + 1) {
+                col = p.sectors[si] > 0 && p.sectors[si] <= p.bestSectors[si] + 0.001 ? '#c66bff' : '#ffd24d';
+            } else if (p.sector === si + 1) col = '#ffffff';
+            ctx.fillStyle = col;
+            ctx.fillRect(sx, 42, 24, 3);
+        }
 
         ctx.textAlign = 'right';
         ctx.font = '12px Consolas, monospace';
@@ -1647,6 +1740,12 @@ class HUD {
         ctx.fillText(Math.round(p.temp) + '°C', x + 72, y + 70);
         ctx.fillStyle = '#889';
         ctx.fillText('P: pit', x + 10, y + 106);
+        if (p.wingDmg) {
+            ctx.fillStyle = '#ff4433';
+            ctx.font = 'bold 11px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('⚠ WING DMG', x + 54, y + 92);
+        }
     }
 
     bars(p) {
@@ -2302,11 +2401,18 @@ class Menu {
                 <div class="setup-col">
                     <div class="setup-label">CIRCUIT</div>
                     <div class="track-list">
-                        ${tracks.map(([k, t]) => `
+                        ${tracks.map(([k, t]) => {
+                            let rec = '';
+                            try {
+                                const recs = JSON.parse(localStorage.getItem('cgp_records') || '{}');
+                                if (recs[k]) rec = ` · <span style="color:#c66bff">${U.fmtTime(recs[k])}</span>`;
+                            } catch (e) { /* no storage */ }
+                            return `
                         <div class="track-item ${k === this.sel.track ? 'selected' : ''}" data-track="${k}">
                             <span class="track-flag">${flags[k]}</span> ${t.shortName}
-                            <span class="team-driver">${(t.lapLength / 1000).toFixed(1)}km</span>
-                        </div>`).join('')}
+                            <span class="team-driver">${(t.lapLength / 1000).toFixed(1)}km${rec}</span>
+                        </div>`;
+                        }).join('')}
                     </div>
                 </div>
                 <div class="setup-col">
@@ -2366,11 +2472,12 @@ class Menu {
     }
 
     renderResults(data) {
-        const { results, champRound } = data;
+        const { results, champRound, newRecord } = data;
         const podium = results.slice(0, 3);
         this.el.innerHTML = `
         <div class="results-panel">
             <div class="results-title">RACE RESULTS</div>
+            ${newRecord ? `<div style="text-align:center;color:#c66bff;font-weight:700;margin-bottom:14px;letter-spacing:2px">★ NEW TRACK RECORD — ${U.fmtTime(newRecord)} ★</div>` : ''}
             <div class="podium">
                 ${podium.map((r, i) => `
                 <div class="podium-step pos-${i + 1}">
@@ -2529,6 +2636,7 @@ class Game {
     }
 
     startRace(opts) {
+        this._lastRaceOpts = opts;
         this.session = new RaceSession({
             trackKey: opts.trackKey, laps: opts.laps, weather: opts.weather,
             difficulty: opts.difficulty, players: opts.players, aiCount: opts.aiCount ?? 19,
@@ -2580,15 +2688,23 @@ class Game {
     }
 
     playerInput(pi) {
-        const k = CFG.CONTROLS[pi], K = this.keys;
-        return {
-            throttle: K[k.up] ? 1 : 0,
-            brake: K[k.down] ? 1 : 0,
-            steer: (K[k.right] ? 1 : 0) - (K[k.left] ? 1 : 0),
-            drs: !!K[k.drs],
-            ers: !!K[k.ers],
-            reset: !!K[k.reset]
-        };
+        const K = this.keys;
+        const maps = [CFG.CONTROLS[pi]];
+        // single local player: WASD and arrows both work
+        if (pi === 0 && this.session && this.session.cars.filter(c => c.isPlayer).length === 1) {
+            maps.push(CFG.CONTROLS[1]);
+        }
+        let up = 0, down = 0, left = 0, right = 0, drs = false, ers = false, reset = false;
+        for (const k of maps) {
+            if (K[k.up]) up = 1;
+            if (K[k.down]) down = 1;
+            if (K[k.left]) left = 1;
+            if (K[k.right]) right = 1;
+            drs = drs || !!K[k.drs];
+            ers = ers || !!K[k.ers];
+            reset = reset || !!K[k.reset];
+        }
+        return { throttle: up, brake: down, steer: right - left, drs, ers, reset };
     }
 
     loop(t) {
@@ -2643,8 +2759,11 @@ class Game {
             }
         }
 
-        // drain events → HUD
-        for (const ev of s.events) this.hud.addMessage(ev.text, ev.color);
+        // drain events → HUD + audio
+        for (const ev of s.events) {
+            if (ev.snd === 'thud') this.audio.thud();
+            if (ev.text) this.hud.addMessage(ev.text, ev.color);
+        }
         s.events.length = 0;
 
         // render
@@ -2715,8 +2834,11 @@ class Game {
             ctx.fillText('PAUSED', 640, 330);
             ctx.font = '20px Arial';
             ctx.fillStyle = '#aab';
-            ctx.fillText('ESC resume · Q quit to menu', 640, 380);
+            ctx.fillText('ESC resume · R restart · Q quit to menu', 640, 380);
             if (this.keys['KeyQ']) this.endRace(true);
+            else if (this.keys['KeyR'] && this._lastRaceOpts && this.netRole === null) {
+                this.startRace(this._lastRaceOpts);
+            }
         }
 
         if (s.state === 'finished' && !this._resultsShown) {
@@ -2752,11 +2874,27 @@ class Game {
             this.netHost.broadcast({ t: 'end', results });
         }
         this.netRole = null;
+        // persistent per-track lap records
+        let newRecord = null;
+        if (!aborted && this._lastRaceOpts) {
+            const myBest = Math.min(...results.filter(rr => rr.isPlayer && isFinite(rr.bestLap)).map(rr => rr.bestLap), Infinity);
+            if (isFinite(myBest)) {
+                try {
+                    const recs = JSON.parse(localStorage.getItem('cgp_records') || '{}');
+                    const tk = this._lastRaceOpts.trackKey;
+                    if (!recs[tk] || myBest < recs[tk]) {
+                        recs[tk] = Math.round(myBest * 1000) / 1000;
+                        localStorage.setItem('cgp_records', JSON.stringify(recs));
+                        newRecord = myBest;
+                    }
+                } catch (e) { /* no storage */ }
+            }
+        }
         this.session = null;
         this.canvas.style.display = 'none';
         if (this.glCanvas) this.glCanvas.style.display = 'none';
         if (this.isChamp && !aborted) this.menu.recordChampResults(results);
-        this.menu.show(aborted ? 'main' : 'results', { results, champRound: this.isChamp });
+        this.menu.show(aborted ? 'main' : 'results', { results, champRound: this.isChamp, newRecord });
     }
 }
 

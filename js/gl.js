@@ -38,6 +38,19 @@ const M4 = {
             -(xx*ex + xy_*ey + xz*ez), -(yx*ex + yy*ey + yz*ez), -(zx*ex + zy*ey + zz*ez), 1
         ]);
     },
+    T(x, y, z) { return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, x,y,z,1]); },
+    rotY(a) { const c=Math.cos(a),s=Math.sin(a); return new Float32Array([c,0,-s,0, 0,1,0,0, s,0,c,0, 0,0,0,1]); },
+    rotZ(a) { const c=Math.cos(a),s=Math.sin(a); return new Float32Array([c,s,0,0, -s,c,0,0, 0,0,1,0, 0,0,0,1]); },
+    // squash onto plane y=h along light dir L (planar projected shadows)
+    flatten(h, L) {
+        const a = L[0] / L[1], b = L[2] / L[1];
+        return new Float32Array([
+            1, 0, 0, 0,
+            -a, 0, -b, 0,
+            0, 0, 1, 0,
+            a * h, h + 0.06, b * h, 1
+        ]);
+    },
     trs(x, y, z, yaw, pitch) {
         const cy = Math.cos(yaw), sy = Math.sin(yaw);
         const cp = Math.cos(pitch || 0), sp = Math.sin(pitch || 0);
@@ -184,6 +197,31 @@ class MeshBuf {
         this.tri(a[0],a[1],a[2], b[0],b[1],b[2], c[0],c[1],c[2], col[0],col[1],col[2]);
         this.tri(a[0],a[1],a[2], c[0],c[1],c[2], d[0],d[1],d[2], col[0],col[1],col[2]);
     }
+    triC(a, b, c, ca, cb, cc, uvs) {
+        const ux = b[0]-a[0], uy = b[1]-a[1], uz = b[2]-a[2], vx = c[0]-a[0], vy = c[1]-a[1], vz = c[2]-a[2];
+        let nx = uy*vz - uz*vy, ny = uz*vx - ux*vz, nz = ux*vy - uy*vx;
+        const l = Math.hypot(nx, ny, nz) || 1; nx/=l; ny/=l; nz/=l;
+        this.pos.push(a[0],a[1],a[2], b[0],b[1],b[2], c[0],c[1],c[2]);
+        this.nrm.push(nx,ny,nz, nx,ny,nz, nx,ny,nz);
+        this.col.push(ca[0],ca[1],ca[2], cb[0],cb[1],cb[2], cc[0],cc[1],cc[2]);
+        if (uvs) this.uv.push(uvs[0],uvs[1],uvs[2],uvs[3],uvs[4],uvs[5]);
+        else this.uv.push(T.WHITE.u0,T.WHITE.v0, T.WHITE.u0,T.WHITE.v0, T.WHITE.u0,T.WHITE.v0);
+    }
+    quadTC(a, b, c, d, ca, cb, cc, cd, t) {   // textured quad with per-corner colours
+        this.triC(a, b, c, ca, cb, cc, [t.u0,t.v0, t.u1,t.v0, t.u1,t.v1]);
+        this.triC(a, c, d, ca, cc, cd, [t.u0,t.v0, t.u1,t.v1, t.u0,t.v1]);
+    }
+    cyl(x, y, z, rad, h, col, capCol, segs) {
+        segs = segs || 8;
+        for (let k = 0; k < segs; k++) {
+            const a0 = k/segs*2*Math.PI, a1 = (k+1)/segs*2*Math.PI;
+            const x0 = x+Math.cos(a0)*rad, z0 = z+Math.sin(a0)*rad;
+            const x1 = x+Math.cos(a1)*rad, z1 = z+Math.sin(a1)*rad;
+            const sh = 0.75 + 0.25*Math.abs(Math.cos((a0+a1)/2));
+            this.quad([x0,y,z0],[x0,y+h,z0],[x1,y+h,z1],[x1,y,z1],[col[0]*sh,col[1]*sh,col[2]*sh]);
+            this.tri(x, y+h, z, x1, y+h, z1, x0, y+h, z0, capCol[0], capCol[1], capCol[2]);
+        }
+    }
     quadT(a, b, c, d, col, t) {  // textured quad: a=(u0,v0) b=(u1,v0) c=(u1,v1) d=(u0,v1)
         this.tri(a[0],a[1],a[2], b[0],b[1],b[2], c[0],c[1],c[2], col[0],col[1],col[2],
                  [t.u0, t.v0, t.u1, t.v0, t.u1, t.v1]);
@@ -286,10 +324,23 @@ function buildWorld(cir, def, H, rng) {
         if (isStart) {
             m.quadT(pt(i, hw, 0.06), pt(i + 1, hw, 0.06), pt(i + 1, -hw, 0.06), pt(i, -hw, 0.06), WHITE, T.CHECKER);
         } else {
-            m.quadT(pt(i, hw, 0.05), pt(i + 1, hw, 0.05), pt(i + 1, -hw, 0.05), pt(i, -hw, 0.05), col, T.ASPHALT);
+            // asphalt with worn darker edges (cheap ambient occlusion)
+            const eC = [col[0] * 0.82, col[1] * 0.82, col[2] * 0.84];
+            m.quadTC(pt(i, hw, 0.05), pt(i + 1, hw, 0.05), pt(i + 1, 0, 0.05), pt(i, 0, 0.05),
+                     eC, eC, col, col, T.ASPHALT);
+            m.quadTC(pt(i, 0, 0.05), pt(i + 1, 0, 0.05), pt(i + 1, -hw, 0.05), pt(i, -hw, 0.05),
+                     col, col, eC, eC, T.ASPHALT);
             // faint rubbered racing line
             m.quadT(pt(i, 1.6, 0.055), pt(i + 1, 1.6, 0.055), pt(i + 1, -1.6, 0.055), pt(i, -1.6, 0.055),
                     [0.86, 0.86, 0.88], T.RUBBER);
+        }
+        // braking-zone skid marks: dark twin streaks where speed drops hard ahead
+        if (!isStart && cir.at(i).vc > 50 && cir.at(i + 9).vc < 38) {
+            for (const lat of [1.0, -1.0]) {
+                m.quadT(pt(i, lat + 0.45, 0.065), pt(i + 1, lat + 0.45, 0.065),
+                        pt(i + 1, lat - 0.45, 0.065), pt(i, lat - 0.45, 0.065),
+                        [0.38, 0.38, 0.40], T.RUBBER);
+            }
         }
         // edge strips — bright green inside DRS zones, white elsewhere
         const edgeCol = drs && !isStart ? [0.1, 0.9, 0.35] : PAL.edge;
@@ -431,6 +482,27 @@ function buildWorld(cir, def, H, rng) {
             const sc = 0.8 + rng() * 0.9;
             m.box(x, h + 0.8 * sc, z, 0.5 * sc, 1.6 * sc, 0.5 * sc, PAL.trunk, 0);
             m.cone(x, h + 1.4 * sc, z, 2.1 * sc, 4.6 * sc, rng() < 0.5 ? PAL.leaf : PAL.leaf2, 6);
+        } else if (rng() < 0.25) {
+            // team flag on a pole
+            const off = s.w / 2 + 8 + rng() * 6;
+            const x = s.x + s.nx * side * off, z = s.y + s.ny * side * off;
+            const FLAGS = [[0.86,0.08,0.06],[0.05,0.35,0.85],[1.0,0.5,0.0],[0.0,0.55,0.4],[0.9,0.85,0.1]];
+            const fc = FLAGS[(i / 6 | 0) % FLAGS.length];
+            m.box(x, h + 2.2, z, 0.12, 4.4, 0.12, [0.75, 0.77, 0.8], 0);
+            m.quad([x, h + 4.3, z], [x + s.tx * 1.5, h + 4.15, z + s.ty * 1.5],
+                   [x + s.tx * 1.5, h + 3.45, z + s.ty * 1.5], [x, h + 3.5, z], fc);
+        }
+        // tyre-stack barriers on the outside of slow corners
+        if (s.vc < 28 && i % 8 === 0) {
+            const d1 = cir.at(i + 2), d0 = cir.at(i);
+            const cross = d0.tx * d1.ty - d0.ty * d1.tx;
+            const outSide = cross > 0 ? -1 : 1;
+            const off = s.w / 2 + 4.2;
+            for (let q = 0; q < 3; q++) {
+                const qx = s.x + s.nx * outSide * (off + (q % 2) * 1.1) + s.tx * (q - 1) * 1.2;
+                const qz = s.y + s.ny * outSide * (off + (q % 2) * 1.1) + s.ty * (q - 1) * 1.2;
+                m.cyl(qx, h, qz, 0.55, 0.95, [0.07, 0.07, 0.08], [0.88, 0.88, 0.9], 8);
+            }
         }
     }
 
@@ -488,9 +560,97 @@ function buildWorld(cir, def, H, rng) {
               px2 - Math.cos(perp) * wM, DISC_Y, pz2 - Math.sin(perp) * wM,
               col[0], col[1], col[2]);
     }
+    // second, farther, lighter mountain layer for depth
+    for (let k = 0; k < 22; k++) {
+        const a = (k + 0.5) / 22 * 2 * Math.PI;
+        const r = baseR + 320 + rng() * 160;
+        const px2 = ccx + Math.cos(a) * r, pz2 = ccz + Math.sin(a) * r;
+        const hM = 90 + rng() * 90, wM = 220 + rng() * 180;
+        const perp = a + Math.PI / 2;
+        m.tri(px2, hM, pz2,
+              px2 + Math.cos(perp) * wM, DISC_Y, pz2 + Math.sin(perp) * wM,
+              px2 - Math.cos(perp) * wM, DISC_Y, pz2 - Math.sin(perp) * wM,
+              0.56, 0.66, 0.77);
+    }
 
     return m.pack();
 }
+
+/* ---------- sky dome + sun (drawn fog-free) ---------- */
+function buildSky(cir) {
+    const m = new MeshBuf();
+    const b = cir.bounds;
+    const cx = (b.minX + b.maxX) / 2, cz = (b.minY + b.maxY) / 2;
+    const R = 1900;
+    const zen = [0.15, 0.42, 0.92], hor = [0.55, 0.76, 0.94];
+    const RINGS = 6, SEGS = 18;
+    const pt = (ri, si) => {
+        const e = ri / RINGS * Math.PI / 2, a = si / SEGS * 2 * Math.PI;
+        return [cx + Math.cos(a) * Math.cos(e) * R, -12 + Math.sin(e) * R * 0.5, cz + Math.sin(a) * Math.cos(e) * R];
+    };
+    const colAt = ri => {
+        const t = Math.pow(ri / RINGS, 0.5);
+        return [hor[0] + (zen[0] - hor[0]) * t, hor[1] + (zen[1] - hor[1]) * t, hor[2] + (zen[2] - hor[2]) * t];
+    };
+    for (let ri = 0; ri < RINGS; ri++) {
+        for (let si = 0; si < SEGS; si++) {
+            const c0 = colAt(ri), c1 = colAt(ri + 1);
+            m.quadTC(pt(ri, si), pt(ri, si + 1), pt(ri + 1, si + 1), pt(ri + 1, si), c0, c0, c1, c1, T.WHITE);
+        }
+    }
+    // sun disc + halo toward the light direction
+    const L = [0.45, 0.85, 0.30], ll = Math.hypot(...L);
+    const sd = L.map(v => v / ll);
+    const sc = [cx + sd[0] * R * 0.92, -12 + sd[1] * R * 0.46, cz + sd[2] * R * 0.92];
+    const up = [0, 1, 0];
+    const rt = [sd[1] * up[2] - sd[2] * up[1], sd[2] * up[0] - sd[0] * up[2], sd[0] * up[1] - sd[1] * up[0]];
+    const rl = Math.hypot(...rt); rt[0] /= rl; rt[1] /= rl; rt[2] /= rl;
+    const up2 = [rt[1] * sd[2] - rt[2] * sd[1], rt[2] * sd[0] - rt[0] * sd[2], rt[0] * sd[1] - rt[1] * sd[0]];
+    const disc = (rad, col) => {
+        for (let k = 0; k < 8; k++) {
+            const a0 = k / 8 * 2 * Math.PI, a1 = (k + 1) / 8 * 2 * Math.PI;
+            m.tri(sc[0], sc[1], sc[2],
+                  sc[0] + (rt[0] * Math.cos(a1) + up2[0] * Math.sin(a1)) * rad,
+                  sc[1] + (rt[1] * Math.cos(a1) + up2[1] * Math.sin(a1)) * rad,
+                  sc[2] + (rt[2] * Math.cos(a1) + up2[2] * Math.sin(a1)) * rad,
+                  sc[0] + (rt[0] * Math.cos(a0) + up2[0] * Math.sin(a0)) * rad,
+                  sc[1] + (rt[1] * Math.cos(a0) + up2[1] * Math.sin(a0)) * rad,
+                  sc[2] + (rt[2] * Math.cos(a0) + up2[2] * Math.sin(a0)) * rad,
+                  col[0], col[1], col[2]);
+        }
+    };
+    disc(210, [0.88, 0.88, 0.78]);
+    disc(120, [0.99, 0.97, 0.84]);
+    disc(55, [1.0, 1.0, 0.96]);
+    return m.pack();
+}
+
+/* ---------- spinning wheel mesh (octagonal, rim face) ---------- */
+function buildWheel(rad, width) {
+    const m = new MeshBuf();
+    const dark = [0.05, 0.05, 0.06], rim = [0.70, 0.70, 0.75];
+    for (let k = 0; k < 8; k++) {
+        const a0 = k / 8 * 2 * Math.PI, a1 = (k + 1) / 8 * 2 * Math.PI;
+        const x0 = Math.cos(a0) * rad, y0 = Math.sin(a0) * rad;
+        const x1 = Math.cos(a1) * rad, y1 = Math.sin(a1) * rad;
+        // tread
+        m.quad([x0, y0, -width / 2], [x1, y1, -width / 2], [x1, y1, width / 2], [x0, y0, width / 2], dark);
+        // side walls with rim centre
+        m.tri(0, 0, width / 2, x1 * 0.55, y1 * 0.55, width / 2, x0 * 0.55, y0 * 0.55, width / 2,
+              k % 2 === 0 ? rim[0] : rim[0] * 0.7, k % 2 === 0 ? rim[1] : rim[1] * 0.7, k % 2 === 0 ? rim[2] : rim[2] * 0.7);
+        m.quad([x0 * 0.55, y0 * 0.55, width / 2], [x1 * 0.55, y1 * 0.55, width / 2], [x1, y1, width / 2], [x0, y0, width / 2], dark);
+        m.tri(0, 0, -width / 2, x0 * 0.55, y0 * 0.55, -width / 2, x1 * 0.55, y1 * 0.55, -width / 2,
+              k % 2 === 0 ? rim[0] : rim[0] * 0.7, k % 2 === 0 ? rim[1] : rim[1] * 0.7, k % 2 === 0 ? rim[2] : rim[2] * 0.7);
+        m.quad([x0, y0, -width / 2], [x1, y1, -width / 2], [x1 * 0.55, y1 * 0.55, -width / 2], [x0 * 0.55, y0 * 0.55, -width / 2], dark);
+    }
+    return m.pack();
+}
+const WHEEL_POS = [
+    { x: 1.60, y: 0.34, z: 0.98, front: true },
+    { x: 1.60, y: 0.34, z: -0.98, front: true },
+    { x: -1.60, y: 0.35, z: 1.00, front: false },
+    { x: -1.60, y: 0.35, z: -1.00, front: false }
+];
 
 /* ---------- low-poly F1 car ---------- */
 function hexRGB(hex) {
@@ -550,15 +710,6 @@ function buildCar(team) {
         m.box(1.80, 0.38, s * 0.55, 0.06, 0.05, 0.9, carbon, 0);
         m.box(-1.40, 0.44, s * 0.58, 0.06, 0.05, 0.9, carbon, 0);
     }
-    // wheels: tyre box + light rim face outboard
-    const wheel = (x, z, w, d) => {
-        m.box(x, 0.34, z, d, 0.68, w, dark, 0);
-        m.box(x, 0.34, z + (z > 0 ? w / 2 : -w / 2), d * 0.55, 0.40, 0.03, rim, 0);
-    };
-    wheel(1.60, 0.98, 0.36, 0.68);
-    wheel(1.60, -0.98, 0.36, 0.68);
-    wheel(-1.60, 1.00, 0.40, 0.74);
-    wheel(-1.60, -1.00, 0.40, 0.74);
     return m.pack();
 }
 
@@ -570,7 +721,7 @@ function buildShadow() {
 }
 
 if (typeof globalThis !== 'undefined') {
-    globalThis.F1GL = { M4, MeshBuf, heightProfile, buildWorld, buildCar, buildShadow, hexRGB, PAL, buildAtlas, T, ATLAS_SIZE };
+    globalThis.F1GL = { M4, MeshBuf, heightProfile, buildWorld, buildCar, buildShadow, buildSky, buildWheel, WHEEL_POS, hexRGB, PAL, buildAtlas, T, ATLAS_SIZE };
 }
 
 /* ============================================================
@@ -603,7 +754,8 @@ class GLView {
         const vs = `
             attribute vec3 aPos; attribute vec3 aNrm; attribute vec3 aCol; attribute vec2 aUV;
             uniform mat4 uProj, uView, uModel;
-            varying vec3 vCol; varying float vDist; varying vec2 vUV;
+            uniform vec3 uEye; uniform float uSpec;
+            varying vec3 vCol; varying float vDist; varying vec2 vUV; varying float vSpec;
             void main() {
                 vec4 world = uModel * vec4(aPos, 1.0);
                 vec4 viewP = uView * world;
@@ -612,19 +764,24 @@ class GLView {
                 vec3 light = normalize(vec3(0.45, 0.85, 0.30));
                 float diff = max(dot(n, light), 0.0) * 0.55 + 0.55;
                 vCol = aCol * diff;
+                vec3 V = normalize(uEye - world.xyz);
+                vSpec = uSpec * pow(max(dot(reflect(-light, n), V), 0.0), 22.0) * 0.7;
                 vDist = length(viewP.xyz);
                 vUV = aUV;
             }`;
         const fs = `
             precision mediump float;
-            varying vec3 vCol; varying float vDist; varying vec2 vUV;
+            varying vec3 vCol; varying float vDist; varying vec2 vUV; varying float vSpec;
             uniform vec3 uFog; uniform float uFogFar; uniform float uAlpha;
+            uniform vec4 uOverride;
             uniform sampler2D uTex;
             void main() {
                 vec4 t = texture2D(uTex, vUV);
                 if (t.a < 0.5) discard;
-                float f = smoothstep(uFogFar * 0.35, uFogFar, vDist);
-                gl_FragColor = vec4(mix(t.rgb * vCol, uFog, f), uAlpha);
+                vec3 c = t.rgb * vCol + vec3(vSpec);
+                if (uOverride.a > 0.5) c = uOverride.rgb;
+                float f = smoothstep(uFogFar * 0.55, uFogFar, vDist);
+                gl_FragColor = vec4(mix(c, uFog, f), uAlpha);
             }`;
         const mk = (type, src) => {
             const s = gl.createShader(type);
@@ -649,7 +806,10 @@ class GLView {
             uFog: gl.getUniformLocation(p, 'uFog'),
             uFogFar: gl.getUniformLocation(p, 'uFogFar'),
             uAlpha: gl.getUniformLocation(p, 'uAlpha'),
-            uTex: gl.getUniformLocation(p, 'uTex')
+            uTex: gl.getUniformLocation(p, 'uTex'),
+            uEye: gl.getUniformLocation(p, 'uEye'),
+            uSpec: gl.getUniformLocation(p, 'uSpec'),
+            uOverride: gl.getUniformLocation(p, 'uOverride')
         };
 
         // procedural atlas texture
@@ -680,9 +840,21 @@ class GLView {
         this.H = heightProfile(cir, def.hills ?? 7);
         const world = buildWorld(cir, def, this.H, Math.random);
         this.world = this._upload(world);
+        this.sky = this._upload(buildSky(cir));
         this.carMeshes = {};
         for (const t of teams) if (!this.carMeshes[t.short]) this.carMeshes[t.short] = this._upload(buildCar(t));
-        this.shadow = this._upload(buildShadow());
+        this.wheelF = this._upload(buildWheel(0.34, 0.36));
+        this.wheelR = this._upload(buildWheel(0.37, 0.40));
+        this.lightCube = this._upload((() => { const m = new MeshBuf(); m.box(0, 0, 0, 0.7, 0.7, 0.5, [1, 1, 1], 0); return m.pack(); })());
+        const s2 = cir.at(2), h2 = this.hAt(2);
+        this.startLights = [];
+        for (let li = 0; li < 5; li++) {
+            const lat = (li - 2) * 2.2;
+            this.startLights.push([s2.x + s2.nx * lat, h2 + 5.1, s2.y + s2.ny * lat]);
+        }
+        this.LIGHT = [0.45, 0.85, 0.30];
+        const ll = Math.hypot(...this.LIGHT);
+        this.LIGHT = this.LIGHT.map(v => v / ll);
     }
 
     hAt(i) { const N = this.cir.N; return this.H[((i % N) + N) % N]; }
@@ -766,40 +938,83 @@ class GLView {
         gl.uniformMatrix4fv(L.uProj, false, proj);
         gl.uniformMatrix4fv(L.uView, false, view);
         gl.uniform3fv(L.uFog, fog);
-        gl.uniform1f(L.uFogFar, wetness > 0.3 ? 420 : 1150);
         gl.uniform1f(L.uAlpha, 1.0);
+        gl.uniform3f(L.uEye, cam.pos[0], cam.pos[1], cam.pos[2]);
+        gl.uniform1f(L.uSpec, 0);
+        gl.uniform4f(L.uOverride, 0, 0, 0, 0);
+
+        // sky dome + sun (no fog)
+        gl.uniform1f(L.uFogFar, 1e9);
+        this._bind(this.sky);
+        gl.uniformMatrix4fv(L.uModel, false, M4.ident());
+        gl.drawArrays(gl.TRIANGLES, 0, this.sky.n);
 
         // world
+        gl.uniform1f(L.uFogFar, wetness > 0.3 ? 420 : 1150);
         this._bind(this.world);
         gl.uniformMatrix4fv(L.uModel, false, M4.ident());
         gl.drawArrays(gl.TRIANGLES, 0, this.world.n);
 
-        // cars
-        for (const c of session.cars) {
-            if (mode === 'cockpit' && c === car) continue;
+        // start lights (live with the countdown)
+        const lit = session.state === 'countdown'
+            ? Math.max(0, Math.min(5, Math.ceil((3.6 - session.countdown) / 0.6))) : 0;
+        this._bind(this.lightCube);
+        for (let li = 0; li < 5; li++) {
+            const p = this.startLights[li];
+            gl.uniform4f(L.uOverride, li < lit ? 1.0 : 0.16, 0.03, 0.03, 1);
+            gl.uniformMatrix4fv(L.uModel, false, M4.trs(p[0], p[1], p[2],
+                -Math.atan2(this.cir.at(2).ty, this.cir.at(2).tx), 0));
+            gl.drawArrays(gl.TRIANGLES, 0, this.lightCube.n);
+        }
+        gl.uniform4f(L.uOverride, 0, 0, 0, 0);
+
+        // cars: body with specular paint + four spinning wheels
+        const carPose = c => {
             const ch2 = this.hAt(c.idx);
             const slope = (this.hAt(c.idx + 2) - this.hAt(c.idx - 2)) / (4 * this.cir.ds);
-            const pitch = Math.atan(slope) * 0.8;
-            const mdl = M4.trs(c.x, ch2 + 0.05, c.y, -c.heading, pitch);
+            return { mdl: M4.trs(c.x, ch2 + 0.05, c.y, -c.heading, Math.atan(slope) * 0.8), h: ch2 };
+        };
+        for (const c of session.cars) {
+            if (mode === 'cockpit' && c === car) continue;
+            const { mdl } = carPose(c);
             const mesh = this.carMeshes[c.short] || Object.values(this.carMeshes)[0];
             if (!mesh) continue;
+            gl.uniform1f(L.uSpec, 1);
             this._bind(mesh);
             gl.uniformMatrix4fv(L.uModel, false, mdl);
             gl.drawArrays(gl.TRIANGLES, 0, mesh.n);
+            gl.uniform1f(L.uSpec, 0.3);
+            const spin = -(c.wheelAng || 0), steer = (c.steerS || 0) * 0.32;
+            for (const wp of WHEEL_POS) {
+                const wm = wp.front
+                    ? M4.mul(mdl, M4.mul(M4.T(wp.x, wp.y, wp.z), M4.mul(M4.rotY(-steer), M4.rotZ(spin))))
+                    : M4.mul(mdl, M4.mul(M4.T(wp.x, wp.y, wp.z), M4.rotZ(spin)));
+                const wmesh = wp.front ? this.wheelF : this.wheelR;
+                this._bind(wmesh);
+                gl.uniformMatrix4fv(L.uModel, false, wm);
+                gl.drawArrays(gl.TRIANGLES, 0, wmesh.n);
+            }
         }
+        gl.uniform1f(L.uSpec, 0);
 
-        // blob shadows
+        // planar projected shadows (car silhouette squashed along sunlight)
         gl.enable(gl.BLEND);
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
         gl.depthMask(false);
-        gl.uniform1f(L.uAlpha, 0.32);
-        this._bind(this.shadow);
+        gl.uniform1f(L.uAlpha, 0.34);
+        gl.uniform4f(L.uOverride, 0.02, 0.02, 0.04, 1);
         for (const c of session.cars) {
             if (mode === 'cockpit' && c === car) continue;
-            const mdl = M4.trs(c.x, this.hAt(c.idx) + 0.10, c.y, -c.heading, 0);
-            gl.uniformMatrix4fv(L.uModel, false, mdl);
-            gl.drawArrays(gl.TRIANGLES, 0, this.shadow.n);
+            const { mdl, h } = carPose(c);
+            const flat = M4.mul(M4.flatten(h, this.LIGHT), mdl);
+            const mesh = this.carMeshes[c.short] || Object.values(this.carMeshes)[0];
+            if (!mesh) continue;
+            this._bind(mesh);
+            gl.uniformMatrix4fv(L.uModel, false, flat);
+            gl.drawArrays(gl.TRIANGLES, 0, mesh.n);
         }
+        gl.uniform4f(L.uOverride, 0, 0, 0, 0);
+        gl.uniform1f(L.uAlpha, 1.0);
         gl.depthMask(true);
         gl.disable(gl.BLEND);
         gl.disable(gl.SCISSOR_TEST);

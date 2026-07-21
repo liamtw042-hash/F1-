@@ -16,7 +16,7 @@ for (const f of ['js/tracks.js', 'js/f1.js', 'js/gl.js']) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', f), 'utf8'), sandbox, { filename: f });
 }
 const { Circuit, RaceSession, CFG } = sandbox.F1;
-const { heightProfile, buildWorld, buildCar, buildAtlas } = sandbox.F1GL;
+const { heightProfile, buildWorld, buildCar, buildAtlas, buildSky, buildWheel, WHEEL_POS } = sandbox.F1GL;
 const ATLAS = buildAtlas();
 const TRACK_DATA = sandbox.TRACK_DATA;
 
@@ -79,6 +79,8 @@ function render(track, outFile, camIdx) {
     const cir = new Circuit(def);
     const Hp = heightProfile(cir, def.hills ?? 7);
     const world = buildWorld(cir, def, Hp, mulberry32(9));
+    const sky = buildSky(cir);
+    const wheelF = buildWheel(0.34, 0.36), wheelR = buildWheel(0.37, 0.40);
     const hAt = i => Hp[((i % cir.N) + cir.N) % cir.N];
 
     // grid of cars from a real session for authentic placement
@@ -128,6 +130,7 @@ function render(track, outFile, camIdx) {
         }
     }
 
+    let BLEND = 0;
     const toView = (px, py, pz) => {
         const dx = px - eye[0], dy = py - eye[1], dz = pz - eye[2];
         return [dx * xx + dz * xz, dx * yx + dy * yy + dz * yz, dx * zx + dy * zy + dz * zz];
@@ -180,14 +183,21 @@ function render(track, outFile, camIdx) {
                 const ty = Math.min(ATLAS.size - 1, Math.max(0, (vv * ATLAS.size) | 0));
                 const to = (ty * ATLAS.size + tx) * 4;
                 if (ATLAS.data[to + 3] < 128) continue;      // discard fence holes
-                zbuf[idx] = z;
                 const tr = ATLAS.data[to] / 255, tg = ATLAS.data[to + 1] / 255, tb = ATLAS.data[to + 2] / 255;
-                const f = Math.min(1, Math.max(0, (z - fogFar * 0.35) / (fogFar * 0.65)));
+                const f = Math.min(1, Math.max(0, (z - fogFar * 0.55) / (fogFar * 0.45)));
                 const ff = f * f * (3 - 2 * f);
                 const o = idx * 3;
-                img[o] = Math.min(255, r * tr * (1 - ff) + fogC[0] * ff);
-                img[o + 1] = Math.min(255, g * tg * (1 - ff) + fogC[1] * ff);
-                img[o + 2] = Math.min(255, b * tb * (1 - ff) + fogC[2] * ff);
+                if (BLEND > 0) {
+                    // shadow decal: darken what's underneath, keep depth
+                    img[o] = img[o] * (1 - BLEND) + r * BLEND;
+                    img[o + 1] = img[o + 1] * (1 - BLEND) + g * BLEND;
+                    img[o + 2] = img[o + 2] * (1 - BLEND) + b * BLEND;
+                } else {
+                    zbuf[idx] = z;
+                    img[o] = Math.min(255, r * tr * (1 - ff) + fogC[0] * ff);
+                    img[o + 1] = Math.min(255, g * tg * (1 - ff) + fogC[1] * ff);
+                    img[o + 2] = Math.min(255, b * tb * (1 - ff) + fogC[2] * ff);
+                }
             }
         }
     }
@@ -220,10 +230,40 @@ function render(track, outFile, camIdx) {
         }
     }
 
+    drawMesh(sky);
     drawMesh(world);
+    const L = LIGHT;
     for (const c of session.cars) {
         const mesh = carMeshes.get(c.short);
-        drawMesh(mesh, c.x, hAt(c.idx) + 0.05, c.y, -c.heading);
+        const yaw = -c.heading, cy = Math.cos(yaw), sy = Math.sin(yaw);
+        const carY = hAt(c.idx) + 0.05, gh = hAt(c.idx);
+        // planar shadow: flatten body along sunlight onto the road
+        BLEND = 0.42;
+        (() => {
+            const { pos, n } = mesh;
+            for (let i = 0; i < n; i += 3) {
+                const vs = [];
+                for (let k = 0; k < 3; k++) {
+                    const j = (i + k) * 3;
+                    let px = pos[j] * cy + pos[j + 2] * sy + c.x;
+                    let py = pos[j + 1] + carY;
+                    let pz = -pos[j] * sy + pos[j + 2] * cy + c.y;
+                    px -= (py - gh) * L[0] / L[1];
+                    pz -= (py - gh) * L[2] / L[1];
+                    const vv = toView(px, gh + 0.07, pz);
+                    vv.push(0.002, 0.002);
+                    vs.push(vv);
+                }
+                drawTri(vs[0], vs[1], vs[2], 12, 12, 20);
+            }
+        })();
+        BLEND = 0;
+        drawMesh(mesh, c.x, carY, c.y, yaw);
+        for (const wp of WHEEL_POS) {
+            const wx = c.x + wp.x * cy + wp.z * sy;
+            const wz = c.y - wp.x * sy + wp.z * cy;
+            drawMesh(wp.front ? wheelF : wheelR, wx, carY + wp.y, wz, yaw);
+        }
     }
 
     // downsample 2x
