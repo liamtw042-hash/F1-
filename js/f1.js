@@ -8,7 +8,7 @@
 
 /* ============================== CONFIG ============================== */
 const CFG = {
-    VERSION: '4.1',
+    VERSION: '4.2',
     DT: 1 / 60,
     VMAX: 103,              // m/s hard cap (~371 km/h)
     MASS: 798,              // kg without fuel
@@ -2661,6 +2661,12 @@ class Game {
             this.audio.resume();
         });
         window.addEventListener('keyup', (e) => { this.keys[e.code] = false; });
+        // release everything if the window loses focus — otherwise a key held
+        // during an alt-tab / click-away never gets its keyup and "sticks on",
+        // making the car appear to accelerate by itself
+        const clearKeys = () => { this.keys = {}; };
+        window.addEventListener('blur', clearKeys);
+        document.addEventListener('visibilitychange', () => { if (document.hidden) clearKeys(); });
 
         requestAnimationFrame((t) => this.loop(t));
     }
