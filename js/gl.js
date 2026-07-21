@@ -119,6 +119,11 @@ function heightProfile(cir, amp) {
         for (let i = 0; i < N; i++) S[i] = (H[(i-1+N)%N] + H[i]*2 + H[(i+1)%N]) / 4;
         H.set(S);
     }
+    // shift so the LOWEST point of the lap sits at y=0 — everything in the
+    // world (base disc, mountains, grass) can then safely live below the track
+    let lo = Infinity;
+    for (let i = 0; i < N; i++) lo = Math.min(lo, H[i]);
+    for (let i = 0; i < N; i++) H[i] -= lo;
     return H;
 }
 
@@ -300,23 +305,26 @@ function buildWorld(cir, def, H, rng) {
         }
     }
 
-    // --- clouds ---
-    for (let i = 0; i < 10; i++) {
+    // --- clouds: big puffy stacks, high up so they never read as debris ---
+    for (let i = 0; i < 7; i++) {
         const x = gx0 + rng() * gw, z = gz0 + rng() * gh;
-        const y = 90 + rng() * 50, sc = 14 + rng() * 22;
-        m.box(x, y, z, sc, sc * 0.28, sc * 0.55, [0.97, 0.98, 1.0], rng() * 3);
-        m.box(x + sc * 0.4, y + sc * 0.1, z + sc * 0.2, sc * 0.6, sc * 0.22, sc * 0.4, [0.94, 0.96, 1.0], rng() * 3);
+        const y = 150 + rng() * 70, sc = 34 + rng() * 30;
+        m.box(x, y, z, sc, sc * 0.30, sc * 0.62, [0.99, 0.99, 1.0], rng() * 3);
+        m.box(x + sc * 0.32, y + sc * 0.16, z + sc * 0.15, sc * 0.62, sc * 0.30, sc * 0.45, [0.97, 0.98, 1.0], rng() * 3);
+        m.box(x - sc * 0.3, y + sc * 0.10, z - sc * 0.12, sc * 0.5, sc * 0.24, sc * 0.4, [0.95, 0.97, 1.0], rng() * 3);
     }
 
     // --- horizon: base disc + a ring of low-poly mountains so the world
     //     never ends in a flat sea-looking band ---
+    // base disc WELL below everything (grass grid can dip ~-7 with hill noise)
+    const DISC_Y = -9;
     const ccx = (b.minX + b.maxX) / 2, ccz = (b.minY + b.maxY) / 2;
     const baseR = Math.max(gw, gh) / 2 + 60;
     for (let k = 0; k < 24; k++) {
         const a0 = k / 24 * 2 * Math.PI, a1 = (k + 1) / 24 * 2 * Math.PI;
-        m.tri(ccx, -0.6, ccz,
-              ccx + Math.cos(a1) * 2400, -0.6, ccz + Math.sin(a1) * 2400,
-              ccx + Math.cos(a0) * 2400, -0.6, ccz + Math.sin(a0) * 2400,
+        m.tri(ccx, DISC_Y, ccz,
+              ccx + Math.cos(a1) * 2400, DISC_Y, ccz + Math.sin(a1) * 2400,
+              ccx + Math.cos(a0) * 2400, DISC_Y, ccz + Math.sin(a0) * 2400,
               0.20, 0.34, 0.18);
     }
     for (let k = 0; k < 30; k++) {
@@ -327,8 +335,8 @@ function buildWorld(cir, def, H, rng) {
         const perp = a + Math.PI / 2;
         const col = rng() < 0.5 ? [0.40, 0.52, 0.62] : [0.35, 0.48, 0.58];
         m.tri(px, hM, pz,
-              px + Math.cos(perp) * wM, 0, pz + Math.sin(perp) * wM,
-              px - Math.cos(perp) * wM, 0, pz - Math.sin(perp) * wM,
+              px + Math.cos(perp) * wM, DISC_Y, pz + Math.sin(perp) * wM,
+              px - Math.cos(perp) * wM, DISC_Y, pz - Math.sin(perp) * wM,
               col[0], col[1], col[2]);
     }
 
@@ -344,33 +352,36 @@ function hexRGB(hex) {
 function buildCar(team) {
     const m = new MeshBuf();
     const c1 = hexRGB(team.c1), c2 = hexRGB(team.c2);
+    const c1d = [c1[0] * 0.88, c1[1] * 0.88, c1[2] * 0.88];
     const dark = [0.06, 0.06, 0.07];
-    // main body (tapered box via quads)
-    m.box(-0.3, 0.42, 0, 3.6, 0.5, 1.1, c1, 0);
-    // nose
-    m.tri(2.7, 0.35, 0,   1.5, 0.62, -0.5,  1.5, 0.62, 0.5,  c1[0], c1[1], c1[2]);
-    m.tri(2.7, 0.35, 0,   1.5, 0.62, 0.5,   1.5, 0.20, 0.5,  c1[0]*0.85, c1[1]*0.85, c1[2]*0.85);
-    m.tri(2.7, 0.35, 0,   1.5, 0.20, -0.5,  1.5, 0.62, -0.5, c1[0]*0.85, c1[1]*0.85, c1[2]*0.85);
-    m.tri(2.7, 0.35, 0,   1.5, 0.20, 0.5,   1.5, 0.20, -0.5, c1[0]*0.7, c1[1]*0.7, c1[2]*0.7);
-    // sidepods
-    m.box(-0.5, 0.45, 0.72, 1.7, 0.42, 0.35, c2, 0);
-    m.box(-0.5, 0.45, -0.72, 1.7, 0.42, 0.35, c2, 0);
+    // long low hull in team primary
+    m.box(-0.35, 0.36, 0, 4.3, 0.40, 0.92, c1, 0);
+    // sidepods — same family as the body, slightly darker (not giant accent blocks)
+    m.box(-0.55, 0.40, 0.60, 2.0, 0.34, 0.34, c1d, 0);
+    m.box(-0.55, 0.40, -0.60, 2.0, 0.34, 0.34, c1d, 0);
+    // nose cone
+    m.tri(2.95, 0.32, 0,   1.75, 0.56, -0.42,  1.75, 0.56, 0.42,  c1[0], c1[1], c1[2]);
+    m.tri(2.95, 0.32, 0,   1.75, 0.56, 0.42,   1.75, 0.18, 0.42,  c1[0]*0.85, c1[1]*0.85, c1[2]*0.85);
+    m.tri(2.95, 0.32, 0,   1.75, 0.18, -0.42,  1.75, 0.56, -0.42, c1[0]*0.85, c1[1]*0.85, c1[2]*0.85);
+    m.tri(2.95, 0.32, 0,   1.75, 0.18, 0.42,   1.75, 0.18, -0.42, c1[0]*0.7, c1[1]*0.7, c1[2]*0.7);
+    // accent stripe along the spine
+    m.box(0.15, 0.585, 0, 2.6, 0.05, 0.34, c2, 0);
     // cockpit + halo
-    m.box(0.25, 0.78, 0, 0.9, 0.35, 0.6, dark, 0);
-    m.box(0.25, 1.06, 0, 0.75, 0.10, 0.75, [0.55, 0.57, 0.60], 0);
+    m.box(0.25, 0.72, 0, 0.85, 0.30, 0.55, dark, 0);
+    m.box(0.25, 0.95, 0, 0.70, 0.08, 0.68, [0.55, 0.57, 0.60], 0);
     // engine cover fin
-    m.box(-1.3, 0.82, 0, 1.4, 0.42, 0.22, c1, 0);
-    // front wing
-    m.box(2.45, 0.16, 0, 0.55, 0.10, 2.0, c2, 0);
-    // rear wing
-    m.box(-2.35, 0.95, 0, 0.5, 0.10, 1.9, c2, 0);
-    m.box(-2.35, 0.55, 0.9, 0.12, 0.75, 0.12, dark, 0);
-    m.box(-2.35, 0.55, -0.9, 0.12, 0.75, 0.12, dark, 0);
-    // wheels (boxes read fine in low-poly)
-    m.box(1.55, 0.34, 1.02, 0.72, 0.68, 0.38, dark, 0);
-    m.box(1.55, 0.34, -1.02, 0.72, 0.68, 0.38, dark, 0);
-    m.box(-1.65, 0.36, 1.05, 0.78, 0.72, 0.42, dark, 0);
-    m.box(-1.65, 0.36, -1.05, 0.78, 0.72, 0.42, dark, 0);
+    m.box(-1.35, 0.74, 0, 1.5, 0.36, 0.18, c1, 0);
+    // front wing — wide, thin, accent colour
+    m.box(2.62, 0.13, 0, 0.55, 0.08, 1.95, c2, 0);
+    // rear wing on pylons
+    m.box(-2.40, 0.90, 0, 0.48, 0.09, 1.85, c2, 0);
+    m.box(-2.40, 0.52, 0.85, 0.10, 0.70, 0.10, dark, 0);
+    m.box(-2.40, 0.52, -0.85, 0.10, 0.70, 0.10, dark, 0);
+    // wheels
+    m.box(1.60, 0.33, 0.98, 0.68, 0.66, 0.34, dark, 0);
+    m.box(1.60, 0.33, -0.98, 0.68, 0.66, 0.34, dark, 0);
+    m.box(-1.60, 0.35, 1.00, 0.74, 0.70, 0.38, dark, 0);
+    m.box(-1.60, 0.35, -1.00, 0.74, 0.70, 0.38, dark, 0);
     return m.pack();
 }
 

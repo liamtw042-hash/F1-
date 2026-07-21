@@ -8,7 +8,7 @@
 
 /* ============================== CONFIG ============================== */
 const CFG = {
-    VERSION: '3.1',
+    VERSION: '3.2',
     DT: 1 / 60,
     VMAX: 103,              // m/s hard cap (~371 km/h)
     MASS: 798,              // kg without fuel
@@ -2617,6 +2617,15 @@ class Game {
             } else if (this.netRole === 'client' && this.netClient && this._netFrame % 3 === 0) {
                 const mine = s.cars.find(c => c.isPlayer);
                 if (mine) this.netClient.sendState(mine);
+            }
+
+            // coach a player who hasn't found the throttle yet
+            if (s.state === 'racing' && s.raceTime > 2 && s.raceTime < 20) {
+                const p0 = s.cars.find(c => c.isPlayer && c.playerIndex === 0);
+                if (p0 && Math.abs(p0.v) < 3 && (!this._hintT || t - this._hintT > 3500)) {
+                    this._hintT = t;
+                    this.hud.addMessage('HOLD  W  TO ACCELERATE  ·  A / D  TO STEER', '#ffd24d');
+                }
             }
 
             // position change popups for local players

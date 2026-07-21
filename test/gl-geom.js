@@ -41,6 +41,11 @@ for (const key of Object.keys(TRACK_DATA)) {
         // elevation must loop: ends meet within slope tolerance
         const seam = Math.abs(H[0] - H[cir.N - 1]);
         if (seam > 1.0) throw new Error(`elevation seam ${seam.toFixed(2)}m at start line`);
+        // track must never dip below y=0 (the submerged-world regression:
+        // a base plane above track height drowned the road and cars)
+        const minH = Math.min(...H);
+        if (minH < -0.001) throw new Error(`track dips to ${minH.toFixed(2)}m — below the world base plane`);
+        if (Math.abs(minH) > 0.5) throw new Error(`height profile not grounded at 0 (min ${minH.toFixed(2)})`);
         const maxSlope = Math.max(...Array.from({ length: cir.N }, (_, i) =>
             Math.abs(H[(i + 1) % cir.N] - H[i]) / cir.ds));
         if (maxSlope > 0.20) throw new Error(`slope ${(maxSlope * 100).toFixed(0)}% too steep`);
