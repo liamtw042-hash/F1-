@@ -5,28 +5,17 @@
     <meta name="viewport" content="width=1280">
     <title>F1 Racing Championship</title>
     <link rel="stylesheet" href="css/style.css">
-    <style>
-        @font-face {
-            font-family: 'Formula1';
-            src: local('Arial Black'), local('Impact');
-            font-weight: bold;
-        }
-    </style>
     <script>
-        // Polyfill for CanvasRenderingContext2D.roundRect (older browsers)
-        if (!CanvasRenderingContext2D.prototype.roundRect) {
-            CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, r) {
-                if (typeof r === 'number') r = [r, r, r, r];
-                const [tl, tr, br, bl] = (Array.isArray(r) ? [...r, ...r] : [r,r,r,r]).slice(0,4);
-                this.moveTo(x + tl, y);
-                this.lineTo(x + w - tr, y);
-                this.quadraticCurveTo(x + w, y, x + w, y + tr);
-                this.lineTo(x + w, y + h - br);
-                this.quadraticCurveTo(x + w, y + h, x + w - br, y + h);
-                this.lineTo(x + bl, y + h);
-                this.quadraticCurveTo(x, y + h, x, y + h - bl);
-                this.lineTo(x, y + tl);
-                this.quadraticCurveTo(x, y, x + tl, y);
+        // roundRect polyfill for older browsers
+        if (typeof CanvasRenderingContext2D !== 'undefined' && !CanvasRenderingContext2D.prototype.roundRect) {
+            CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r) {
+                r = Math.min(r || 0, w / 2, h / 2);
+                this.moveTo(x + r, y);
+                this.arcTo(x + w, y, x + w, y + h, r);
+                this.arcTo(x + w, y + h, x, y + h, r);
+                this.arcTo(x, y + h, x, y, r);
+                this.arcTo(x, y, x + w, y, r);
+                this.closePath();
                 return this;
             };
         }
@@ -34,54 +23,21 @@
 </head>
 <body>
 
-<!-- GAME CANVAS -->
-<canvas id="gameCanvas"></canvas>
-<canvas id="hud" width="1280" height="720" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;display:none;"></canvas>
-
-<!-- MENU OVERLAY -->
+<canvas id="gameCanvas" style="display:none"></canvas>
 <div id="menu"></div>
 
-<!-- SCRIPTS: load order matters -->
-<script src="js/config.js"></script>
-<script src="js/utils.js"></script>
-<script src="js/tracks/monaco.js"></script>
-<script src="js/tracks/spa.js"></script>
-<script src="js/tracks/silverstone.js"></script>
-<script src="js/tracks/monza.js"></script>
-<script src="js/tracks/suzuka.js"></script>
-<script src="js/car.js"></script>
-<script src="js/physics.js"></script>
-<script src="js/track.js"></script>
-<script src="js/renderer.js"></script>
-<script src="js/particles.js"></script>
-<script src="js/weather.js"></script>
-<script src="js/ai.js"></script>
-<script src="js/audio.js"></script>
-<script src="js/hud.js"></script>
-<script src="js/multiplayer.js"></script>
-<script src="js/game.js"></script>
-<script src="js/menu.js"></script>
+<script src="js/tracks.js"></script>
+<script src="js/f1.js"></script>
 <script>
-    // Boot
-    window.game = new Game();
-    window.gameMenu = new Menu(game);
-
-    // Handle canvas resize to fit window
-    function resizeCanvas() {
-        const canvas = document.getElementById('gameCanvas');
-        const hudCanvas = document.getElementById('hud');
-        const scaleX = window.innerWidth / 1280;
-        const scaleY = window.innerHeight / 720;
-        const scale = Math.min(scaleX, scaleY);
-        const w = Math.round(1280 * scale);
-        const h = Math.round(720 * scale);
-        canvas.style.width = w + 'px';
-        canvas.style.height = h + 'px';
-        hudCanvas.style.width = w + 'px';
-        hudCanvas.style.height = h + 'px';
+    // Scale canvas to fit window while keeping 16:9
+    function fit() {
+        const c = document.getElementById('gameCanvas');
+        const s = Math.min(window.innerWidth / 1280, window.innerHeight / 720);
+        c.style.width = Math.round(1280 * s) + 'px';
+        c.style.height = Math.round(720 * s) + 'px';
     }
-    resizeCanvas();
-    window.addEventListener('resize', resizeCanvas);
+    fit();
+    window.addEventListener('resize', fit);
 </script>
 </body>
 </html>

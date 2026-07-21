@@ -1,13 +1,8 @@
 {
-  "name": "f1-racing-game",
-  "version": "1.0.0",
-  "description": "Realistic F1 browser racing game with multiplayer",
-  "main": "server.js",
+  "name": "f1-racing-championship",
+  "version": "2.0.0",
+  "description": "Browser F1 racing game — 5 circuits, 19 AI drivers, weather, pit strategy, championship",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node server.js"
-  },
-  "dependencies": {
-    "ws": "^8.16.0"
+    "test": "node test/sim.js"
   }
 }
