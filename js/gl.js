@@ -51,10 +51,125 @@ const M4 = {
     }
 };
 
+/* ---------- procedural texture atlas (pure JS — browser & headless) ----------
+   512x512 RGBA, 128px tiles. Tile (0,0) is plain white so untextured geometry
+   multiplies through unchanged. */
+const ATLAS_SIZE = 512, TILE = 128;
+function buildAtlas() {
+    const S = ATLAS_SIZE;
+    const d = new Uint8Array(S * S * 4).fill(255);
+    let rs = 12345;
+    const rnd = () => { rs = (rs * 1103515245 + 12345) & 0x7fffffff; return rs / 0x7fffffff; };
+    const px = (tx, ty, x, y, r, g, b, a) => {
+        const o = ((ty * TILE + y) * S + tx * TILE + x) * 4;
+        d[o] = r; d[o + 1] = g; d[o + 2] = b; d[o + 3] = a === undefined ? 255 : a;
+    };
+    const fill = (tx, ty, fn) => {
+        for (let y = 0; y < TILE; y++) for (let x = 0; x < TILE; x++) {
+            const c = fn(x, y);
+            px(tx, ty, x, y, c[0], c[1], c[2], c[3]);
+        }
+    };
+
+    // (1,0) asphalt: fine low-contrast grain with rare chips
+    fill(1, 0, () => {
+        const n = 96 + rnd() * 13;
+        const chip = rnd() > 0.995 ? 34 : 0;
+        return [n + chip, n + chip, n + chip + 5];
+    });
+    // (2,0) grass dark / (3,0) grass light: mottled greens
+    fill(2, 0, () => { const n = rnd(); return [46 + n * 26, 96 + n * 34, 40 + n * 22]; });
+    fill(3, 0, () => { const n = rnd(); return [58 + n * 30, 118 + n * 38, 50 + n * 24]; });
+    // (0,1) kerb: red/white stripes along u with shading ramp across v
+    fill(0, 1, (x, y) => {
+        const red = ((x / TILE) * 4 | 0) % 2 === 0;
+        const shade = 0.82 + 0.18 * (y / TILE);
+        const n = 1 - rnd() * 0.08;
+        return red ? [225 * shade * n, 42 * shade, 36 * shade] : [235 * shade * n, 233 * shade * n, 228 * shade * n];
+    });
+    // (1,1) crowd: rows of random people-coloured pixels on dark seats
+    fill(1, 1, (x, y) => {
+        if (y % 8 < 3) return [38 + rnd() * 10, 40 + rnd() * 10, 48 + rnd() * 10];
+        if (rnd() < 0.85) {
+            const h = rnd();
+            return h < 0.3 ? [200 + rnd() * 55, 170 + rnd() * 40, 140 + rnd() * 40]
+                 : [40 + rnd() * 215, 40 + rnd() * 180, 40 + rnd() * 215];
+        }
+        return [46, 48, 56];
+    });
+    // (2,1) armco: horizontal ribbed metal
+    fill(2, 1, (x, y) => {
+        const rib = Math.abs(Math.sin(y / TILE * Math.PI * 3));
+        const v = 150 + rib * 70 - rnd() * 18;
+        return [v, v + 3, v + 8];
+    });
+    // (3,1) banner: CRAZY GP block letters (5x7 font) red on white
+    {
+        const FONT = {
+            C: ['0111', '1000', '1000', '1000', '1000', '1000', '0111'],
+            R: ['1110', '1001', '1001', '1110', '1010', '1001', '1001'],
+            A: ['0110', '1001', '1001', '1111', '1001', '1001', '1001'],
+            Z: ['1111', '0001', '0010', '0100', '1000', '1000', '1111'],
+            Y: ['1001', '1001', '0110', '0010', '0010', '0010', '0010'],
+            G: ['0111', '1000', '1000', '1011', '1001', '1001', '0111'],
+            P: ['1110', '1001', '1001', '1110', '1000', '1000', '1000'],
+            ' ': ['0000', '0000', '0000', '0000', '0000', '0000', '0000']
+        };
+        fill(3, 1, (x, y) => (y < 10 || y > TILE - 10) ? [200, 30, 30] : [245, 245, 245]);
+        const word = 'CRAZY GP';
+        const scale = 3, cw = 5 * scale;
+        let ox = Math.floor((TILE - word.length * cw) / 2);
+        const oy = Math.floor((TILE - 7 * scale) / 2);
+        for (const ch of word) {
+            const glyph = FONT[ch];
+            for (let gy = 0; gy < 7; gy++) for (let gx = 0; gx < 4; gx++) {
+                if (glyph[gy][gx] === '1') {
+                    for (let sy = 0; sy < scale; sy++) for (let sx = 0; sx < scale; sx++) {
+                        px(3, 1, ox + gx * scale + sx, oy + gy * scale + sy, 190, 25, 25);
+                    }
+                }
+            }
+            ox += cw;
+        }
+    }
+    // (0,2) catch fence: thin diagonal grid, transparent holes
+    fill(0, 2, (x, y) => {
+        const on = (x + y) % 16 < 2 || (x - y & 15) < 2 || y < 3 || y > TILE - 4;
+        return on ? [120, 124, 132, 255] : [0, 0, 0, 0];
+    });
+    // (1,2) pit wall: concrete with garage door slots
+    fill(1, 2, (x, y) => {
+        const door = (x % 43) > 6 && (x % 43) < 36 && y > 34;
+        if (door) { const v = 52 + rnd() * 10 + (y % 9 < 2 ? 26 : 0); return [v, v, v + 4]; }
+        const v = 168 + rnd() * 20;
+        return [v, v - 4, v - 10];
+    });
+    // (2,2) rubbered racing line: slightly darker asphalt streaks
+    fill(2, 2, (x) => {
+        const n = 84 + rnd() * 22 + Math.abs(Math.sin(x / TILE * Math.PI)) * 10;
+        return [n, n, n + 4];
+    });
+    // (3,2) start-line checker
+    fill(3, 2, (x, y) => ((x / 16 | 0) + (y / 16 | 0)) % 2 === 0
+        ? [235, 235, 235] : [22, 22, 24]);
+
+    return { data: d, size: S };
+}
+// tile → inset uv rect helpers (2px inset against bleeding)
+function uvTile(tx, ty) {
+    const t = TILE / ATLAS_SIZE, inset = 2 / ATLAS_SIZE;
+    return { u0: tx * t + inset, v0: ty * t + inset, u1: (tx + 1) * t - inset, v1: (ty + 1) * t - inset };
+}
+const T = {
+    WHITE: uvTile(0, 0), ASPHALT: uvTile(1, 0), GRASS_D: uvTile(2, 0), GRASS_L: uvTile(3, 0),
+    KERB: uvTile(0, 1), CROWD: uvTile(1, 1), ARMCO: uvTile(2, 1), BANNER: uvTile(3, 1),
+    FENCE: uvTile(0, 2), PITWALL: uvTile(1, 2), RUBBER: uvTile(2, 2), CHECKER: uvTile(3, 2)
+};
+
 /* ---------- geometry accumulator ---------- */
 class MeshBuf {
-    constructor() { this.pos = []; this.nrm = []; this.col = []; }
-    tri(ax, ay, az, bx, by, bz, cx, cy, cz, r, g, b) {
+    constructor() { this.pos = []; this.nrm = []; this.col = []; this.uv = []; }
+    tri(ax, ay, az, bx, by, bz, cx, cy, cz, r, g, b, uvs) {
         // flat normal
         const ux = bx-ax, uy = by-ay, uz = bz-az, vx = cx-ax, vy = cy-ay, vz = cz-az;
         let nx = uy*vz - uz*vy, ny = uz*vx - ux*vz, nz = ux*vy - uy*vx;
@@ -62,10 +177,18 @@ class MeshBuf {
         this.pos.push(ax,ay,az, bx,by,bz, cx,cy,cz);
         this.nrm.push(nx,ny,nz, nx,ny,nz, nx,ny,nz);
         this.col.push(r,g,b, r,g,b, r,g,b);
+        if (uvs) this.uv.push(uvs[0], uvs[1], uvs[2], uvs[3], uvs[4], uvs[5]);
+        else this.uv.push(T.WHITE.u0, T.WHITE.v0, T.WHITE.u0, T.WHITE.v0, T.WHITE.u0, T.WHITE.v0);
     }
     quad(a, b, c, d, col) {   // a,b,c,d = [x,y,z] counter-clockwise
         this.tri(a[0],a[1],a[2], b[0],b[1],b[2], c[0],c[1],c[2], col[0],col[1],col[2]);
         this.tri(a[0],a[1],a[2], c[0],c[1],c[2], d[0],d[1],d[2], col[0],col[1],col[2]);
+    }
+    quadT(a, b, c, d, col, t) {  // textured quad: a=(u0,v0) b=(u1,v0) c=(u1,v1) d=(u0,v1)
+        this.tri(a[0],a[1],a[2], b[0],b[1],b[2], c[0],c[1],c[2], col[0],col[1],col[2],
+                 [t.u0, t.v0, t.u1, t.v0, t.u1, t.v1]);
+        this.tri(a[0],a[1],a[2], c[0],c[1],c[2], d[0],d[1],d[2], col[0],col[1],col[2],
+                 [t.u0, t.v0, t.u1, t.v1, t.u0, t.v1]);
     }
     box(x, y, z, sx, sy, sz, col, yaw) {
         const c = Math.cos(yaw || 0), s = Math.sin(yaw || 0);
@@ -90,13 +213,14 @@ class MeshBuf {
                      col[0]*(0.8 + 0.2*Math.sin(a0)), col[1]*(0.8 + 0.2*Math.sin(a0)), col[2]*(0.8 + 0.2*Math.sin(a0)));
         }
     }
-    merge(o) { this.pos.push(...o.pos); this.nrm.push(...o.nrm); this.col.push(...o.col); }
+    merge(o) { this.pos.push(...o.pos); this.nrm.push(...o.nrm); this.col.push(...o.col); this.uv.push(...o.uv); }
     count() { return this.pos.length / 3; }
     pack() {
         return {
             pos: new Float32Array(this.pos),
             nrm: new Float32Array(this.nrm),
             col: new Float32Array(this.col),
+            uv: new Float32Array(this.uv),
             n: this.pos.length / 3
         };
     }
@@ -150,70 +274,69 @@ function buildWorld(cir, def, H, rng) {
         const s = cir.at(i);
         return [s.x + s.nx * lat, hAt(i) + (lift || 0), s.y + s.ny * lat];
     };
+    const WHITE = [1, 1, 1];
 
-    // --- road ribbon + kerbs + edges + DRS tint ---
+    // --- road ribbon: textured asphalt, rubbered line, kerbs, edges ---
     for (let i = 0; i < N; i++) {
         const s = cir.at(i), hw = s.w / 2;
         const isStart = i < 2;
         const drs = cir.inDRS(i * cir.ds);
-        let col = (i >> 1) % 2 === 0 ? PAL.road : PAL.roadAlt;   // ~13m stripes flicker past at speed
-        if (drs) col = [col[0]*0.9 + PAL.drs[0]*0.25, col[1]*0.9 + PAL.drs[1]*0.25, col[2]*0.9 + PAL.drs[2]*0.25];
+        const shade = (i >> 1) % 2 === 0 ? 0.93 : 1.0;
+        const col = [shade, shade, shade];
         if (isStart) {
-            // checkered start strip
-            const cols = 8;
-            for (let q = 0; q < cols; q++) {
-                const l0 = -hw + q / cols * s.w, l1 = -hw + (q + 1) / cols * s.w;
-                m.quad(pt(i, l1, 0.06), pt(i + 1, l1, 0.06), pt(i + 1, l0, 0.06), pt(i, l0, 0.06),
-                       (q + i) % 2 === 0 ? PAL.check : PAL.checkD);
-            }
+            m.quadT(pt(i, hw, 0.06), pt(i + 1, hw, 0.06), pt(i + 1, -hw, 0.06), pt(i, -hw, 0.06), WHITE, T.CHECKER);
         } else {
-            m.quad(pt(i, hw, 0.05), pt(i + 1, hw, 0.05), pt(i + 1, -hw, 0.05), pt(i, -hw, 0.05), col);
+            m.quadT(pt(i, hw, 0.05), pt(i + 1, hw, 0.05), pt(i + 1, -hw, 0.05), pt(i, -hw, 0.05), col, T.ASPHALT);
+            // faint rubbered racing line
+            m.quadT(pt(i, 1.6, 0.055), pt(i + 1, 1.6, 0.055), pt(i + 1, -1.6, 0.055), pt(i, -1.6, 0.055),
+                    [0.86, 0.86, 0.88], T.RUBBER);
         }
-        // white edge strips
-        m.quad(pt(i, hw, 0.08), pt(i + 1, hw, 0.08), pt(i + 1, hw - 0.5, 0.08), pt(i, hw - 0.5, 0.08), PAL.edge);
-        m.quad(pt(i, -hw + 0.5, 0.08), pt(i + 1, -hw + 0.5, 0.08), pt(i + 1, -hw, 0.08), pt(i, -hw, 0.08), PAL.edge);
-        // marker posts every ~26m — dense trackside detail is the strongest speed cue
+        // edge strips — bright green inside DRS zones, white elsewhere
+        const edgeCol = drs && !isStart ? [0.1, 0.9, 0.35] : PAL.edge;
+        m.quad(pt(i, hw, 0.08), pt(i + 1, hw, 0.08), pt(i + 1, hw - 0.5, 0.08), pt(i, hw - 0.5, 0.08), edgeCol);
+        m.quad(pt(i, -hw + 0.5, 0.08), pt(i + 1, -hw + 0.5, 0.08), pt(i + 1, -hw, 0.08), pt(i, -hw, 0.08), edgeCol);
+        // striped kerbs
+        if (s.kerb) {
+            m.quadT(pt(i, hw + 2.0, 0.02), pt(i + 1, hw + 2.0, 0.02), pt(i + 1, hw, 0.18), pt(i, hw, 0.18), WHITE, T.KERB);
+            m.quadT(pt(i, -hw, 0.18), pt(i + 1, -hw, 0.18), pt(i + 1, -hw - 2.0, 0.02), pt(i, -hw - 2.0, 0.02), WHITE, T.KERB);
+        }
+        // marker posts
         if (i % 4 === 0) {
             const pc = (i >> 2) % 2 === 0 ? [0.92, 0.18, 0.15] : [0.95, 0.95, 0.97];
             const pl = pt(i, hw + 2.8, 0), pr = pt(i, -hw - 2.8, 0);
             m.box(pl[0], pl[1] + 0.55, pl[2], 0.22, 1.1, 0.22, pc, 0);
             m.box(pr[0], pr[1] + 0.55, pr[2], 0.22, 1.1, 0.22, pc, 0);
         }
-        // kerbs: raised, vivid
-        if (s.kerb) {
-            const kc = (i >> 1) % 2 === 0 ? PAL.kerbR : PAL.kerbW;
-            m.quad(pt(i, hw + 2.0, 0.02), pt(i + 1, hw + 2.0, 0.02), pt(i + 1, hw, 0.18), pt(i, hw, 0.18), kc);
-            m.quad(pt(i, -hw, 0.18), pt(i + 1, -hw, 0.18), pt(i + 1, -hw - 2.0, 0.02), pt(i, -hw - 2.0, 0.02), kc);
-        }
     }
 
-    // --- mow stripes + perimeter walls: ground-level detail that sells speed ---
+    // --- mown grass bands, armco walls, catch fencing ---
     for (let i = 0; i < N; i++) {
         const s = cir.at(i), hw = s.w / 2;
-        const shade = (i >> 3) % 2 === 0 ? 1.0 : 0.86;
-        const g1 = [PAL.grassA[0] * shade, PAL.grassA[1] * shade, PAL.grassA[2] * shade];
-        const g2 = [PAL.grassB[0] * shade, PAL.grassB[1] * shade, PAL.grassB[2] * shade];
-        // two mown bands each side between track edge and wall
-        m.quad(pt(i, hw + 2.2, 0.01), pt(i + 1, hw + 2.2, 0.01), pt(i + 1, hw + 4.4, 0.01), pt(i, hw + 4.4, 0.01), g1);
-        m.quad(pt(i, hw + 4.4, 0.01), pt(i + 1, hw + 4.4, 0.01), pt(i + 1, hw + 6.4, 0.01), pt(i, hw + 6.4, 0.01), g2);
-        m.quad(pt(i, -hw - 4.4, 0.01), pt(i + 1, -hw - 4.4, 0.01), pt(i + 1, -hw - 2.2, 0.01), pt(i, -hw - 2.2, 0.01), g1);
-        m.quad(pt(i, -hw - 6.4, 0.01), pt(i + 1, -hw - 6.4, 0.01), pt(i + 1, -hw - 4.4, 0.01), pt(i, -hw - 4.4, 0.01), g2);
-        // low armco walls with a red flash every so often
-        const wallCol = (i >> 4) % 6 === 0 ? [0.85, 0.16, 0.14] : [0.78, 0.80, 0.84];
+        const light = (i >> 3) % 2 === 0;
+        const bandT = light ? T.GRASS_L : T.GRASS_D;
+        const bandT2 = light ? T.GRASS_D : T.GRASS_L;
+        m.quadT(pt(i, hw + 2.2, 0.01), pt(i + 1, hw + 2.2, 0.01), pt(i + 1, hw + 4.4, 0.01), pt(i, hw + 4.4, 0.01), WHITE, bandT);
+        m.quadT(pt(i, hw + 4.4, 0.01), pt(i + 1, hw + 4.4, 0.01), pt(i + 1, hw + 6.4, 0.01), pt(i, hw + 6.4, 0.01), WHITE, bandT2);
+        m.quadT(pt(i, -hw - 4.4, 0.01), pt(i + 1, -hw - 4.4, 0.01), pt(i + 1, -hw - 2.2, 0.01), pt(i, -hw - 2.2, 0.01), WHITE, bandT);
+        m.quadT(pt(i, -hw - 6.4, 0.01), pt(i + 1, -hw - 6.4, 0.01), pt(i + 1, -hw - 4.4, 0.01), pt(i, -hw - 4.4, 0.01), WHITE, bandT2);
+        const wallTint = (i >> 4) % 6 === 0 ? [1.0, 0.30, 0.26] : WHITE;
         const wOff = hw + 6.6, wh = 0.95;
         const a0 = pt(i, wOff, 0), a1 = pt(i + 1, wOff, 0);
-        m.quad([a0[0], a0[1] + wh, a0[2]], [a1[0], a1[1] + wh, a1[2]], [a1[0], a1[1], a1[2]], [a0[0], a0[1], a0[2]], wallCol);
+        m.quadT([a0[0], a0[1] + wh, a0[2]], [a1[0], a1[1] + wh, a1[2]], [a1[0], a1[1], a1[2]], [a0[0], a0[1], a0[2]], wallTint, T.ARMCO);
         const b0 = pt(i, -wOff, 0), b1 = pt(i + 1, -wOff, 0);
-        m.quad([b0[0], b0[1], b0[2]], [b1[0], b1[1], b1[2]], [b1[0], b1[1] + wh, b1[2]], [b0[0], b0[1] + wh, b0[2]], wallCol);
+        m.quadT([b0[0], b0[1], b0[2]], [b1[0], b1[1], b1[2]], [b1[0], b1[1] + wh, b1[2]], [b0[0], b0[1] + wh, b0[2]], wallTint, T.ARMCO);
+        // catch fence above the wall
+        const fh0 = wh, fh1 = wh + 2.3;
+        m.quadT([a0[0], a0[1] + fh1, a0[2]], [a1[0], a1[1] + fh1, a1[2]], [a1[0], a1[1] + fh0, a1[2]], [a0[0], a0[1] + fh0, a0[2]], WHITE, T.FENCE);
+        m.quadT([b0[0], b0[1] + fh0, b0[2]], [b1[0], b1[1] + fh0, b1[2]], [b1[0], b1[1] + fh1, b1[2]], [b0[0], b0[1] + fh1, b0[2]], WHITE, T.FENCE);
     }
 
-    // --- grass: coarse two-tone grid following track height nearby ---
+    // --- grass field grid ---
     const b = cir.bounds, mar = 190;
     const gx0 = b.minX - mar, gz0 = b.minY - mar;
     const gw = (b.maxX - b.minX) + 2 * mar, gh = (b.maxY - b.minY) + 2 * mar;
     const CELLS = 42;
     const cw = gw / CELLS, ch = gh / CELLS;
-    // coarse nearest-track lookup
     const step = Math.max(1, Math.floor(N / 260));
     const hNear = (x, z) => {
         let bd = 1e18, bi = 0;
@@ -237,18 +360,37 @@ function buildWorld(cir, def, H, rng) {
     for (let gz = 0; gz < CELLS; gz++) {
         for (let gx = 0; gx < CELLS; gx++) {
             const x0 = gx0 + gx * cw, z0 = gz0 + gz * ch;
-            const col = (gx + gz) % 2 === 0 ? PAL.grassA : PAL.grassB;
-            m.quad(
+            const tone = (gx + gz) % 2 === 0 ? 1.0 : 0.88;
+            m.quadT(
                 [x0, gridH[gz][gx], z0],
                 [x0, gridH[gz + 1][gx], z0 + ch],
                 [x0 + cw, gridH[gz + 1][gx + 1], z0 + ch],
                 [x0 + cw, gridH[gz][gx + 1], z0],
-                col
+                [tone, tone, tone], T.GRASS_D
             );
         }
     }
 
-    // --- trackside: trees, boards, grandstands ---
+    // --- pit building along the start straight ---
+    {
+        const side = -1, off0 = 11, depth = 8, hgt = 5.4;
+        for (let r = -22; r < 4; r += 2) {
+            const i = ((r % N) + N) % N;
+            const s = cir.at(i), s2 = cir.at(i + 2);
+            const hw = s.w / 2, hw2 = s2.w / 2;
+            const fA = pt(i, side * (hw + off0), 0), fB = pt(i + 2, side * (hw2 + off0), 0);
+            // track-facing wall with garage doors
+            m.quadT([fA[0], fA[1] + hgt, fA[2]], [fB[0], fB[1] + hgt, fB[2]], [fB[0], fB[1], fB[2]], [fA[0], fA[1], fA[2]], WHITE, T.PITWALL);
+            // banner strip on top
+            m.quadT([fA[0], fA[1] + hgt + 1.3, fA[2]], [fB[0], fB[1] + hgt + 1.3, fB[2]], [fB[0], fB[1] + hgt, fB[2]], [fA[0], fA[1] + hgt, fA[2]], WHITE, T.BANNER);
+            // roof sloping back
+            const rA = pt(i, side * (hw + off0 + depth), 0), rB = pt(i + 2, side * (hw2 + off0 + depth), 0);
+            m.quad([fA[0], fA[1] + hgt, fA[2]], [fB[0], fB[1] + hgt, fB[2]],
+                   [rB[0], rB[1] + hgt - 0.6, rB[2]], [rA[0], rA[1] + hgt - 0.6, rA[2]], [0.62, 0.64, 0.68]);
+        }
+    }
+
+    // --- trackside: grandstands with crowd texture, banners, trees ---
     for (let i = 0; i < N; i += 6) {
         const s = cir.at(i);
         const nearStart = i < 26 || i > N - 26;
@@ -256,33 +398,35 @@ function buildWorld(cir, def, H, rng) {
         const h = hAt(i);
         if (nearStart && i % 18 === 0 && i > 3 && i < N - 3) {
             const off = s.w / 2 + 16;
-            const x = s.x + s.nx * off, z = s.y + s.ny * off;
+            const bx = s.x + s.nx * off, bz = s.y + s.ny * off;
             const yaw = Math.atan2(s.ty, s.tx);
-            // tiered stand with corner posts holding the roof (no more floating slabs)
-            m.box(x, h + 1.0, z, 20, 2.0, 7, [0.55, 0.58, 0.66], -yaw);
-            m.box(x + s.nx * 2, h + 2.6, z + s.ny * 2, 20, 1.6, 3.5, [0.48, 0.51, 0.60], -yaw);
-            for (const dx of [-9, 9]) {
-                for (const dzz of [-3, 3]) {
-                    const px2 = x + s.tx * dx + s.nx * dzz, pz2 = z + s.ty * dx + s.ny * dzz;
-                    m.box(px2, h + 3.4, pz2, 0.35, 3.2, 0.35, PAL.gantry, -yaw);
-                }
+            // crowd face: big tilted quad facing the track
+            const inX = s.nx * -3.2, inZ = s.ny * -3.2, outX = s.nx * 3.2, outZ = s.ny * 3.2;
+            const tX = s.tx * 11, tZ = s.ty * 11;
+            m.quadT(
+                [bx - tX + outX, h + 4.6, bz - tZ + outZ],
+                [bx + tX + outX, h + 4.6, bz + tZ + outZ],
+                [bx + tX + inX, h + 0.7, bz + tZ + inZ],
+                [bx - tX + inX, h + 0.7, bz - tZ + inZ],
+                WHITE, T.CROWD);
+            // structure: side walls, roof on posts
+            m.box(bx, h + 0.35, bz, 22, 0.7, 7, [0.42, 0.45, 0.52], -yaw);
+            for (const dx of [-10, 10]) {
+                const px2 = bx + s.tx * dx + outX * 0.8, pz2 = bz + s.ty * dx + outZ * 0.8;
+                m.box(px2, h + 3.4, pz2, 0.35, 5.6, 0.35, PAL.gantry, -yaw);
             }
-            m.box(x, h + 5.1, z, 21, 0.45, 8, PAL.standRoof, -yaw);
-            // crowd: colored cubes on the tiers
-            for (let q = 0; q < 12; q++) {
-                const cx2 = x + s.tx * (-9 + q * 1.6), cz2 = z + s.ty * (-9 + q * 1.6);
-                m.box(cx2 + s.nx * (rng() - 0.5) * 4, h + 2.3 + rng() * 1.4, cz2 + s.ny * (rng() - 0.5) * 4,
-                      0.7, 0.7, 0.7, [0.4 + rng() * 0.6, 0.35 + rng() * 0.5, 0.4 + rng() * 0.6], 0);
-            }
+            m.box(bx + outX * 0.35, h + 6.4, bz + outZ * 0.35, 23, 0.4, 8.5, PAL.standRoof, -yaw);
         } else if (s.kerb && i % 18 === 0) {
-            const off = s.w / 2 + 6;
-            const x = s.x + s.nx * side * off, z = s.y + s.ny * side * off;
-            const yaw = Math.atan2(s.ty, s.tx);
-            m.box(x, h + 0.8, z, 0.3, 1.6, 0.3, PAL.gantry, -yaw);
-            m.box(x, h + 2.0, z, 4.4, 1.1, 0.25, PAL.board, -yaw);
-            m.box(x, h + 2.62, z, 4.4, 0.32, 0.27, PAL.boardRed, -yaw);
+            const off = s.w / 2 + 9;
+            const bx = s.x + s.nx * side * off, bz = s.y + s.ny * side * off;
+            const tX = s.tx * 2.6, tZ = s.ty * 2.6;
+            m.box(bx, h + 0.8, bz, 0.3, 1.6, 0.3, PAL.gantry, 0);
+            m.quadT([bx - tX, h + 3.0, bz - tZ], [bx + tX, h + 3.0, bz + tZ],
+                    [bx + tX, h + 1.7, bz + tZ], [bx - tX, h + 1.7, bz - tZ], WHITE, T.BANNER);
+            m.quadT([bx + tX, h + 3.0, bz + tZ], [bx - tX, h + 3.0, bz - tZ],
+                    [bx - tX, h + 1.7, bz - tZ], [bx + tX, h + 1.7, bz + tZ], WHITE, T.BANNER);
         } else if (rng() < 0.6) {
-            const off = s.w / 2 + 9 + rng() * 16;
+            const off = s.w / 2 + 10 + rng() * 16;
             const x = s.x + s.nx * side * off, z = s.y + s.ny * side * off;
             const sc = 0.8 + rng() * 0.9;
             m.box(x, h + 0.8 * sc, z, 0.5 * sc, 1.6 * sc, 0.5 * sc, PAL.trunk, 0);
@@ -290,7 +434,7 @@ function buildWorld(cir, def, H, rng) {
         }
     }
 
-    // --- start gantry ---
+    // --- start gantry with banner beam ---
     {
         const s = cir.at(2), hw = s.w / 2, h = hAt(2);
         const yaw = Math.atan2(s.ty, s.tx);
@@ -298,14 +442,21 @@ function buildWorld(cir, def, H, rng) {
         const pR = [s.x - s.nx * (hw + 1.5), s.y - s.ny * (hw + 1.5)];
         m.box(pL[0], h + 3.0, pL[1], 0.8, 6.0, 0.8, PAL.gantry, -yaw);
         m.box(pR[0], h + 3.0, pR[1], 0.8, 6.0, 0.8, PAL.gantry, -yaw);
-        m.box(s.x, h + 6.2, s.y, 1.2, 1.4, hw * 2 + 4, PAL.gantry, -yaw);
+        // banner faces on the beam
+        const nx = s.nx * (hw + 1.5), nz = s.ny * (hw + 1.5);
+        const fx = s.tx * 0.7, fz = s.ty * 0.7;
+        m.quadT([s.x - nx - fx, h + 7.0, s.y - nz - fz], [s.x + nx - fx, h + 7.0, s.y + nz - fz],
+                [s.x + nx - fx, h + 5.6, s.y + nz - fz], [s.x - nx - fx, h + 5.6, s.y - nz - fz], WHITE, T.BANNER);
+        m.quadT([s.x + nx + fx, h + 7.0, s.y + nz + fz], [s.x - nx + fx, h + 7.0, s.y - nz + fz],
+                [s.x - nx + fx, h + 5.6, s.y - nz + fz], [s.x + nx + fx, h + 5.6, s.y + nz + fz], WHITE, T.BANNER);
+        m.box(s.x, h + 7.2, s.y, 1.4, 0.4, hw * 2 + 4, PAL.gantry, -yaw);
         for (let li = 0; li < 5; li++) {
             const lat = (li - 2) * 2.2;
-            m.box(s.x + s.nx * lat, h + 5.3, s.y + s.ny * lat, 0.8, 0.8, 0.8, [0.25, 0.03, 0.03], -yaw);
+            m.box(s.x + s.nx * lat, h + 5.1, s.y + s.ny * lat, 0.8, 0.8, 0.8, [0.25, 0.03, 0.03], -yaw);
         }
     }
 
-    // --- clouds: big puffy stacks, high up so they never read as debris ---
+    // --- clouds: big puffy stacks ---
     for (let i = 0; i < 7; i++) {
         const x = gx0 + rng() * gw, z = gz0 + rng() * gh;
         const y = 150 + rng() * 70, sc = 34 + rng() * 30;
@@ -314,9 +465,7 @@ function buildWorld(cir, def, H, rng) {
         m.box(x - sc * 0.3, y + sc * 0.10, z - sc * 0.12, sc * 0.5, sc * 0.24, sc * 0.4, [0.95, 0.97, 1.0], rng() * 3);
     }
 
-    // --- horizon: base disc + a ring of low-poly mountains so the world
-    //     never ends in a flat sea-looking band ---
-    // base disc WELL below everything (grass grid can dip ~-7 with hill noise)
+    // --- horizon: base disc + mountain ring ---
     const DISC_Y = -9;
     const ccx = (b.minX + b.maxX) / 2, ccz = (b.minY + b.maxY) / 2;
     const baseR = Math.max(gw, gh) / 2 + 60;
@@ -330,13 +479,13 @@ function buildWorld(cir, def, H, rng) {
     for (let k = 0; k < 30; k++) {
         const a = k / 30 * 2 * Math.PI;
         const r = baseR + 80 + rng() * 120;
-        const px = ccx + Math.cos(a) * r, pz = ccz + Math.sin(a) * r;
+        const px2 = ccx + Math.cos(a) * r, pz2 = ccz + Math.sin(a) * r;
         const hM = 45 + rng() * 75, wM = 130 + rng() * 130;
         const perp = a + Math.PI / 2;
         const col = rng() < 0.5 ? [0.40, 0.52, 0.62] : [0.35, 0.48, 0.58];
-        m.tri(px, hM, pz,
-              px + Math.cos(perp) * wM, DISC_Y, pz + Math.sin(perp) * wM,
-              px - Math.cos(perp) * wM, DISC_Y, pz - Math.sin(perp) * wM,
+        m.tri(px2, hM, pz2,
+              px2 + Math.cos(perp) * wM, DISC_Y, pz2 + Math.sin(perp) * wM,
+              px2 - Math.cos(perp) * wM, DISC_Y, pz2 - Math.sin(perp) * wM,
               col[0], col[1], col[2]);
     }
 
@@ -354,11 +503,17 @@ function buildCar(team) {
     const c1 = hexRGB(team.c1), c2 = hexRGB(team.c2);
     const c1d = [c1[0] * 0.88, c1[1] * 0.88, c1[2] * 0.88];
     const dark = [0.06, 0.06, 0.07];
+    const carbon = [0.13, 0.13, 0.15];
+    const rim = [0.72, 0.72, 0.76];
     // long low hull in team primary
     m.box(-0.35, 0.36, 0, 4.3, 0.40, 0.92, c1, 0);
-    // sidepods — same family as the body, slightly darker (not giant accent blocks)
+    // floor plank shadow line
+    m.box(-0.2, 0.14, 0, 4.4, 0.06, 1.05, carbon, 0);
+    // sidepods with radiator inlet darker front face
     m.box(-0.55, 0.40, 0.60, 2.0, 0.34, 0.34, c1d, 0);
     m.box(-0.55, 0.40, -0.60, 2.0, 0.34, 0.34, c1d, 0);
+    m.box(0.42, 0.42, 0.60, 0.06, 0.26, 0.28, carbon, 0);
+    m.box(0.42, 0.42, -0.60, 0.06, 0.26, 0.28, carbon, 0);
     // nose cone
     m.tri(2.95, 0.32, 0,   1.75, 0.56, -0.42,  1.75, 0.56, 0.42,  c1[0], c1[1], c1[2]);
     m.tri(2.95, 0.32, 0,   1.75, 0.56, 0.42,   1.75, 0.18, 0.42,  c1[0]*0.85, c1[1]*0.85, c1[2]*0.85);
@@ -366,22 +521,44 @@ function buildCar(team) {
     m.tri(2.95, 0.32, 0,   1.75, 0.18, 0.42,   1.75, 0.18, -0.42, c1[0]*0.7, c1[1]*0.7, c1[2]*0.7);
     // accent stripe along the spine
     m.box(0.15, 0.585, 0, 2.6, 0.05, 0.34, c2, 0);
-    // cockpit + halo
+    // cockpit, driver helmet, halo
     m.box(0.25, 0.72, 0, 0.85, 0.30, 0.55, dark, 0);
-    m.box(0.25, 0.95, 0, 0.70, 0.08, 0.68, [0.55, 0.57, 0.60], 0);
-    // engine cover fin
-    m.box(-1.35, 0.74, 0, 1.5, 0.36, 0.18, c1, 0);
-    // front wing — wide, thin, accent colour
-    m.box(2.62, 0.13, 0, 0.55, 0.08, 1.95, c2, 0);
-    // rear wing on pylons
-    m.box(-2.40, 0.90, 0, 0.48, 0.09, 1.85, c2, 0);
-    m.box(-2.40, 0.52, 0.85, 0.10, 0.70, 0.10, dark, 0);
-    m.box(-2.40, 0.52, -0.85, 0.10, 0.70, 0.10, dark, 0);
-    // wheels
-    m.box(1.60, 0.33, 0.98, 0.68, 0.66, 0.34, dark, 0);
-    m.box(1.60, 0.33, -0.98, 0.68, 0.66, 0.34, dark, 0);
-    m.box(-1.60, 0.35, 1.00, 0.74, 0.70, 0.38, dark, 0);
-    m.box(-1.60, 0.35, -1.00, 0.74, 0.70, 0.38, dark, 0);
+    m.box(0.18, 0.92, 0, 0.30, 0.24, 0.30, [0.9, 0.9, 0.95], 0);   // helmet
+    m.box(0.25, 1.02, 0, 0.70, 0.06, 0.68, [0.55, 0.57, 0.60], 0); // halo ring
+    m.box(0.62, 0.90, 0, 0.06, 0.22, 0.06, [0.55, 0.57, 0.60], 0); // halo pillar
+    // airbox + engine cover fin
+    m.box(-0.45, 0.98, 0, 0.55, 0.30, 0.34, c1, 0);
+    m.box(-1.35, 0.80, 0, 1.6, 0.42, 0.14, c1, 0);
+    // T-cam
+    m.box(-0.45, 1.20, 0, 0.16, 0.14, 0.30, [0.95, 0.2, 0.1], 0);
+    // front wing: main plane + flaps + endplates
+    m.box(2.62, 0.12, 0, 0.60, 0.07, 2.0, c2, 0);
+    m.box(2.45, 0.22, 0, 0.30, 0.06, 1.7, [c2[0]*0.8, c2[1]*0.8, c2[2]*0.8], 0);
+    m.box(2.62, 0.24, 1.0, 0.62, 0.30, 0.07, carbon, 0);
+    m.box(2.62, 0.24, -1.0, 0.62, 0.30, 0.07, carbon, 0);
+    // rear wing: narrower plane, slim endplates, pylon + beam wing
+    m.box(-2.40, 0.98, 0, 0.46, 0.07, 1.45, c2, 0);
+    m.box(-2.40, 0.82, 0.74, 0.50, 0.42, 0.05, carbon, 0);
+    m.box(-2.40, 0.82, -0.74, 0.50, 0.42, 0.05, carbon, 0);
+    m.box(-2.40, 0.56, 0, 0.09, 0.80, 0.09, dark, 0);
+    m.box(-2.32, 0.44, 0, 0.30, 0.05, 1.15, carbon, 0);
+    // diffuser
+    m.box(-2.30, 0.20, 0, 0.45, 0.16, 1.05, carbon, 0);
+    // suspension arms (thin diagonals)
+    for (const s of [1, -1]) {
+        m.box(1.35, 0.42, s * 0.55, 0.06, 0.05, 0.9, carbon, 0);
+        m.box(1.80, 0.38, s * 0.55, 0.06, 0.05, 0.9, carbon, 0);
+        m.box(-1.40, 0.44, s * 0.58, 0.06, 0.05, 0.9, carbon, 0);
+    }
+    // wheels: tyre box + light rim face outboard
+    const wheel = (x, z, w, d) => {
+        m.box(x, 0.34, z, d, 0.68, w, dark, 0);
+        m.box(x, 0.34, z + (z > 0 ? w / 2 : -w / 2), d * 0.55, 0.40, 0.03, rim, 0);
+    };
+    wheel(1.60, 0.98, 0.36, 0.68);
+    wheel(1.60, -0.98, 0.36, 0.68);
+    wheel(-1.60, 1.00, 0.40, 0.74);
+    wheel(-1.60, -1.00, 0.40, 0.74);
     return m.pack();
 }
 
@@ -393,7 +570,7 @@ function buildShadow() {
 }
 
 if (typeof globalThis !== 'undefined') {
-    globalThis.F1GL = { M4, MeshBuf, heightProfile, buildWorld, buildCar, buildShadow, hexRGB, PAL };
+    globalThis.F1GL = { M4, MeshBuf, heightProfile, buildWorld, buildCar, buildShadow, hexRGB, PAL, buildAtlas, T, ATLAS_SIZE };
 }
 
 /* ============================================================
@@ -424,9 +601,9 @@ class GLView {
     _compile() {
         const gl = this.gl;
         const vs = `
-            attribute vec3 aPos; attribute vec3 aNrm; attribute vec3 aCol;
+            attribute vec3 aPos; attribute vec3 aNrm; attribute vec3 aCol; attribute vec2 aUV;
             uniform mat4 uProj, uView, uModel;
-            varying vec3 vCol; varying float vDist;
+            varying vec3 vCol; varying float vDist; varying vec2 vUV;
             void main() {
                 vec4 world = uModel * vec4(aPos, 1.0);
                 vec4 viewP = uView * world;
@@ -436,14 +613,18 @@ class GLView {
                 float diff = max(dot(n, light), 0.0) * 0.55 + 0.55;
                 vCol = aCol * diff;
                 vDist = length(viewP.xyz);
+                vUV = aUV;
             }`;
         const fs = `
             precision mediump float;
-            varying vec3 vCol; varying float vDist;
+            varying vec3 vCol; varying float vDist; varying vec2 vUV;
             uniform vec3 uFog; uniform float uFogFar; uniform float uAlpha;
+            uniform sampler2D uTex;
             void main() {
+                vec4 t = texture2D(uTex, vUV);
+                if (t.a < 0.5) discard;
                 float f = smoothstep(uFogFar * 0.35, uFogFar, vDist);
-                gl_FragColor = vec4(mix(vCol, uFog, f), uAlpha);
+                gl_FragColor = vec4(mix(t.rgb * vCol, uFog, f), uAlpha);
             }`;
         const mk = (type, src) => {
             const s = gl.createShader(type);
@@ -461,13 +642,24 @@ class GLView {
             aPos: gl.getAttribLocation(p, 'aPos'),
             aNrm: gl.getAttribLocation(p, 'aNrm'),
             aCol: gl.getAttribLocation(p, 'aCol'),
+            aUV: gl.getAttribLocation(p, 'aUV'),
             uProj: gl.getUniformLocation(p, 'uProj'),
             uView: gl.getUniformLocation(p, 'uView'),
             uModel: gl.getUniformLocation(p, 'uModel'),
             uFog: gl.getUniformLocation(p, 'uFog'),
             uFogFar: gl.getUniformLocation(p, 'uFogFar'),
-            uAlpha: gl.getUniformLocation(p, 'uAlpha')
+            uAlpha: gl.getUniformLocation(p, 'uAlpha'),
+            uTex: gl.getUniformLocation(p, 'uTex')
         };
+
+        // procedural atlas texture
+        const atlas = buildAtlas();
+        this.tex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, this.tex);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, atlas.size, atlas.size, 0, gl.RGBA, gl.UNSIGNED_BYTE, atlas.data);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+        gl.generateMipmap(gl.TEXTURE_2D);
     }
 
     _upload(mesh) {
@@ -478,7 +670,7 @@ class GLView {
             gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
             return b;
         };
-        return { pos: mk(mesh.pos), nrm: mk(mesh.nrm), col: mk(mesh.col), n: mesh.n };
+        return { pos: mk(mesh.pos), nrm: mk(mesh.nrm), col: mk(mesh.col), uv: mk(mesh.uv), n: mesh.n };
     }
 
     load(cir, def, teams) {
@@ -506,6 +698,12 @@ class GLView {
         gl.bindBuffer(gl.ARRAY_BUFFER, buf.col);
         gl.vertexAttribPointer(L.aCol, 3, gl.FLOAT, false, 0, 0);
         gl.enableVertexAttribArray(L.aCol);
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf.uv);
+        gl.vertexAttribPointer(L.aUV, 2, gl.FLOAT, false, 0, 0);
+        gl.enableVertexAttribArray(L.aUV);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, this.tex);
+        gl.uniform1i(L.uTex, 0);
     }
 
     render(session, car, mode, wetness, vp, dt, timeS) {

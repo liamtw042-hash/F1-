@@ -58,6 +58,7 @@ for (const key of Object.keys(TRACK_DATA)) {
         if (world.n !== world.pos.length / 3 || world.pos.length !== world.nrm.length || world.pos.length !== world.col.length) {
             throw new Error('buffer length mismatch');
         }
+        if (world.uv.length !== world.n * 2) throw new Error('uv buffer length mismatch');
         console.log(`✓ ${key.padEnd(12)} world ${String(world.n).padStart(6)} verts · hills ±${(def.hills ?? 7)}m · max slope ${(maxSlope * 100).toFixed(1)}%`);
     } catch (e) {
         console.error(`✗ ${key}: ${e.message}`);

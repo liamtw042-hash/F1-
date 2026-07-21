@@ -8,7 +8,7 @@
 
 /* ============================== CONFIG ============================== */
 const CFG = {
-    VERSION: '3.2',
+    VERSION: '3.3',
     DT: 1 / 60,
     VMAX: 103,              // m/s hard cap (~371 km/h)
     MASS: 798,              // kg without fuel
